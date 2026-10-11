@@ -56,6 +56,7 @@ class AudioConfig:
 @dataclass(frozen=True)
 class SpeechConfig:
     enabled: bool
+    input_source: str
     model_path: Path
     sample_rate: int
     block_size: int
@@ -222,6 +223,13 @@ def load_config(path: Path) -> AppConfig:
     identity = _as_mapping(_require(raw, "identity"), "identity")
     web = _as_mapping(_require(raw, "web"), "web")
     logging_config = _as_mapping(raw.get("logging", {}), "logging")
+    speech_input_source = str(
+        speech.get("input_source", "macbook")
+    ).strip().lower()
+    if speech_input_source not in {"macbook", "camera"}:
+        raise ValueError(
+            "speech.input_source must be macbook or camera"
+        )
 
     min_area = _ratio(
         _require(person, "min_bbox_area_ratio"),
@@ -339,6 +347,7 @@ def load_config(path: Path) -> AppConfig:
         ),
         speech=SpeechConfig(
             enabled=_boolean(_require(speech, "enabled"), "speech.enabled"),
+            input_source=speech_input_source,
             model_path=_project_path(
                 project_root,
                 _require(speech, "model_path"),

@@ -172,6 +172,35 @@ class ConfigTest(unittest.TestCase):
         self.assertIsNone(config.speech.device)
         self.assertEqual(2, config.speech.command_cooldown_seconds)
 
+    def test_loads_camera_speech_input_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(
+                VALID_CONFIG.replace(
+                    "  enabled: false\n",
+                    "  enabled: false\n  input_source: camera\n",
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+        self.assertEqual("camera", config.speech.input_source)
+
+    def test_rejects_unknown_speech_input_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(
+                VALID_CONFIG.replace(
+                    "  enabled: false\n",
+                    "  enabled: false\n  input_source: headset\n",
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError):
+                load_config(path)
+
 
 if __name__ == "__main__":
     unittest.main()

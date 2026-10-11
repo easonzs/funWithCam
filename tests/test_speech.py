@@ -16,6 +16,7 @@ from funwithcam.speech import (
     SpeechCommandHandler,
     START,
     _course_message,
+    _camera_audio_command,
     _homework_message,
     parse_speech_command,
 )
@@ -112,6 +113,36 @@ class SpeechTest(unittest.TestCase):
         self.assertIn("ignored", {event["status"] for event in events})
         self.assertIn("failed", {event["status"] for event in events})
         audio_output.return_value.speak.assert_called_once()
+
+    def test_camera_audio_command_decodes_rtsp_audio_for_speech(self):
+        command = _camera_audio_command(
+            "rtsp://127.0.0.1:8554/study_room"
+        )
+
+        self.assertEqual(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                "rtsp://127.0.0.1:8554/study_room",
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-acodec",
+                "pcm_f32le",
+                "-f",
+                "f32le",
+                "pipe:1",
+            ],
+            command,
+        )
 
 
 if __name__ == "__main__":

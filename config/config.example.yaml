@@ -44,6 +44,8 @@ audio:
 
 speech:
   enabled: false
+  # macbook 使用 sounddevice，camera 使用 go2rtc RTSP 音频。
+  input_source: macbook
   model_path: models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
   sample_rate: 48000
   block_size: 8000

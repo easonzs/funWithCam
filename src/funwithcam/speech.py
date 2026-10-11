@@ -1,5 +1,7 @@
 import logging
 import queue
+import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -17,6 +19,7 @@ from .storage.study_session_repository import StudySessionRepository
 
 
 LOGGER = logging.getLogger(__name__)
+CAMERA_AUDIO_SAMPLE_RATE = 16000
 
 START = "start"
 PAUSE = "pause"
@@ -218,9 +221,11 @@ class SherpaSpeechListener:
         self,
         config: SpeechConfig,
         on_text: Callable[[str], bool],
+        audio_stream_url: Optional[str] = None,
     ):
         self._config = config
         self._on_text = on_text
+        self._audio_stream_url = audio_stream_url
 
     def run(self, stop_event: threading.Event) -> None:
         try:
@@ -247,13 +252,16 @@ class SherpaSpeechListener:
                     "sherpa-onnx model file not found: {}".format(model_file)
                 )
 
-        audio_queue: queue.Queue[object] = queue.Queue()
+        audio_queue: queue.Queue[object] = queue.Queue(maxsize=4)
 
         def callback(indata, frames, callback_time, status) -> None:
             if status:
                 LOGGER.warning("microphone status: %s", status)
             if not AudioOutput.is_speaking():
-                audio_queue.put(indata.copy().reshape(-1))
+                _queue_audio(
+                    audio_queue,
+                    (indata.copy().reshape(-1), self._config.sample_rate),
+                )
 
         recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
             tokens=str(tokens),
@@ -269,6 +277,25 @@ class SherpaSpeechListener:
             rule3_min_utterance_length=10,
         )
         stream = recognizer.create_stream()
+        if self._config.input_source == "camera":
+            if not self._audio_stream_url:
+                raise RuntimeError(
+                    "camera speech input requires video.stream_url"
+                )
+            LOGGER.info("using camera audio input")
+            with _CameraAudioInput(
+                self._audio_stream_url,
+                self._config.block_size,
+            ) as camera_audio:
+                self._run_recognizer(
+                    stop_event,
+                    recognizer,
+                    stream,
+                    camera_audio,
+                )
+            return
+
+        LOGGER.info("using MacBook microphone input")
         last_command = None
         last_command_at = 0.0
         LOGGER.info("starting local speech recognition")
@@ -280,33 +307,208 @@ class SherpaSpeechListener:
             channels=1,
             callback=callback,
         ):
-            while not stop_event.is_set():
-                try:
-                    data = audio_queue.get(timeout=0.2)
-                except queue.Empty:
-                    continue
-                if AudioOutput.is_speaking():
-                    continue
-                stream.accept_waveform(self._config.sample_rate, data)
-                while recognizer.is_ready(stream):
-                    recognizer.decode_stream(stream)
-                if not recognizer.is_endpoint(stream):
-                    continue
-                text = str(recognizer.get_result(stream)).strip()
-                recognizer.reset(stream)
-                if not text:
-                    continue
-                now = time.monotonic()
-                if (
-                    text == last_command
-                    and now - last_command_at
-                    < self._config.command_cooldown_seconds
-                ):
-                    continue
-                LOGGER.info("speech recognized: %s", text)
-                if self._on_text(text):
-                    last_command = text
-                    last_command_at = now
+            self._run_recognizer(
+                stop_event,
+                recognizer,
+                stream,
+                audio_queue,
+            )
+
+    def _run_recognizer(
+        self,
+        stop_event: threading.Event,
+        recognizer,
+        stream,
+        audio_queue,
+    ) -> None:
+        last_command = None
+        last_command_at = 0.0
+        while not stop_event.is_set():
+            try:
+                sample, sample_rate = audio_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if AudioOutput.is_speaking():
+                _discard_audio(audio_queue)
+                continue
+            stream.accept_waveform(sample_rate, sample)
+            while recognizer.is_ready(stream):
+                recognizer.decode_stream(stream)
+            if not recognizer.is_endpoint(stream):
+                continue
+            text = str(recognizer.get_result(stream)).strip()
+            recognizer.reset(stream)
+            if not text:
+                continue
+            now = time.monotonic()
+            if (
+                text == last_command
+                and now - last_command_at
+                < self._config.command_cooldown_seconds
+            ):
+                continue
+            LOGGER.info("speech recognized: %s", text)
+            if self._on_text(text):
+                last_command = text
+                last_command_at = now
+
+
+class _CameraAudioInput:
+    def __init__(self, stream_url: str, block_size: int):
+        self._stream_url = stream_url
+        self._chunk_bytes = (
+            max(
+                int(
+                    block_size
+                    * CAMERA_AUDIO_SAMPLE_RATE
+                    / 48000
+                ),
+                1,
+            )
+            * 4
+        )
+        self._queue: queue.Queue[object] = queue.Queue(maxsize=4)
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._process: Optional[subprocess.Popen] = None
+        self._process_lock = threading.Lock()
+
+    def __enter__(self) -> "_CameraAudioInput":
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError(
+                "camera speech input requires ffmpeg in PATH"
+            )
+        self._thread = threading.Thread(
+            target=self._run,
+            name="camera-audio-input",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
+
+    def get(self, timeout: float) -> tuple[object, int]:
+        sample = self._queue.get(timeout=timeout)
+        if sample is _CAMERA_AUDIO_END:
+            raise RuntimeError("camera audio stream stopped")
+        return sample
+
+    def close(self) -> None:
+        self._stop.set()
+        with self._process_lock:
+            process = self._process
+        if process is not None:
+            _terminate_process(process)
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            self._thread = None
+
+    def _run(self) -> None:
+        import numpy
+
+        while not self._stop.is_set():
+            process = self._start_process()
+            if process is None:
+                self._stop.wait(3)
+                continue
+            with self._process_lock:
+                self._process = process
+            try:
+                while not self._stop.is_set():
+                    raw = process.stdout.read(self._chunk_bytes)
+                    if not raw:
+                        break
+                    usable_length = len(raw) - (len(raw) % 4)
+                    if usable_length == 0:
+                        continue
+                    sample = numpy.frombuffer(
+                        raw[:usable_length],
+                        dtype="<f4",
+                    ).copy()
+                    _queue_audio(
+                        self._queue,
+                        (sample, CAMERA_AUDIO_SAMPLE_RATE),
+                    )
+            finally:
+                with self._process_lock:
+                    if self._process is process:
+                        self._process = None
+                _terminate_process(process)
+            if not self._stop.is_set():
+                LOGGER.warning("camera audio stream ended; reconnecting")
+                self._stop.wait(3)
+
+        _queue_audio(self._queue, _CAMERA_AUDIO_END)
+
+    def _start_process(self) -> Optional[subprocess.Popen]:
+        try:
+            return subprocess.Popen(
+                _camera_audio_command(self._stream_url),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            LOGGER.exception("unable to start camera audio input")
+            return None
+
+
+_CAMERA_AUDIO_END = object()
+
+
+def _camera_audio_command(stream_url: str) -> list[str]:
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-rtsp_transport",
+        "tcp",
+        "-i",
+        stream_url,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(CAMERA_AUDIO_SAMPLE_RATE),
+        "-acodec",
+        "pcm_f32le",
+        "-f",
+        "f32le",
+        "pipe:1",
+    ]
+
+
+def _queue_audio(audio_queue: queue.Queue, item: object) -> None:
+    try:
+        audio_queue.put_nowait(item)
+    except queue.Full:
+        try:
+            audio_queue.get_nowait()
+        except queue.Empty:
+            pass
+        audio_queue.put_nowait(item)
+
+
+def _discard_audio(audio_queue: queue.Queue) -> None:
+    while True:
+        try:
+            audio_queue.get_nowait()
+        except queue.Empty:
+            return
+
+
+def _terminate_process(process: subprocess.Popen) -> None:
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
 
 
 def run_speech_service(
@@ -317,7 +519,11 @@ def run_speech_service(
 ) -> None:
     config = load_config(config_path)
     handler = SpeechCommandHandler(config, database_path, prechecks)
-    SherpaSpeechListener(config.speech, handler.handle).run(stop_event)
+    SherpaSpeechListener(
+        config.speech,
+        handler.handle,
+        config.video.stream_url,
+    ).run(stop_event)
 
 
 def run_speech_test(config_path: Path) -> None:
@@ -335,7 +541,11 @@ def run_speech_test(config_path: Path) -> None:
         return command is not None
 
     try:
-        SherpaSpeechListener(config.speech, print_text).run(stop_event)
+        SherpaSpeechListener(
+            config.speech,
+            print_text,
+            config.video.stream_url,
+        ).run(stop_event)
     except KeyboardInterrupt:
         stop_event.set()
 

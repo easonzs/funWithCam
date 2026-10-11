@@ -134,7 +134,7 @@ calibration:
 
 ## 本地语音口令
 
-语音功能使用 sherpa-onnx 和 MacBook 麦克风，默认关闭，不影响 Web 和摄像头提醒。
+语音功能使用 sherpa-onnx，支持 MacBook 麦克风或 go2rtc 摄像头音频，默认关闭，不影响 Web 和摄像头提醒。
 
 安装可选依赖：
 
@@ -154,12 +154,19 @@ models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
 ```yaml
 speech:
   enabled: true
+  # macbook 使用 MacBook 麦克风，camera 使用 go2rtc RTSP 音频。
+  input_source: macbook
   model_path: models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
   sample_rate: 48000
   block_size: 8000
   device:
   command_cooldown_seconds: 2
 ```
+
+将 `input_source` 改为 `camera` 后，程序会通过 FFmpeg 从
+`video.stream_url` 读取摄像头音频，并转换为 16000Hz 单声道语音识别输入。
+camera 模式需要 MacBook 已安装 `ffmpeg`，并使用 TCP 读取 RTSP 音频。
+MacBook 的 `say` 仍然负责语音播报；播报期间会暂时丢弃输入音频，避免把系统播报再次识别为口令。
 
 先单独检查麦克风识别结果：
 
