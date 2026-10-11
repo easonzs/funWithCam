@@ -125,6 +125,18 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(0.8, config.precheck.min_valid_frame_ratio)
         self.assertEqual(45, config.precheck.min_brightness)
 
+    def test_uses_video_warmup_default_for_existing_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(
+                VALID_CONFIG.replace("  warmup_seconds: 1.5\n", ""),
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+        self.assertEqual(1.5, config.video.warmup_seconds)
+
     def test_uses_calibration_defaults_for_existing_config(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
@@ -141,6 +153,24 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(25, config.calibration.timeout_seconds)
         self.assertEqual(12, config.calibration.min_valid_samples)
         self.assertEqual("calibrations", config.calibration.image_dir.name)
+
+    def test_uses_disabled_speech_defaults_for_existing_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            start = VALID_CONFIG.index("speech:")
+            end = VALID_CONFIG.index("identity:")
+            path.write_text(
+                VALID_CONFIG[:start] + VALID_CONFIG[end:],
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+        self.assertFalse(config.speech.enabled)
+        self.assertEqual(48000, config.speech.sample_rate)
+        self.assertEqual(8000, config.speech.block_size)
+        self.assertIsNone(config.speech.device)
+        self.assertEqual(2, config.speech.command_cooldown_seconds)
 
 
 if __name__ == "__main__":

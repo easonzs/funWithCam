@@ -202,7 +202,23 @@ def load_config(path: Path) -> AppConfig:
         "calibration",
     )
     audio = _as_mapping(_require(raw, "audio"), "audio")
-    speech = _as_mapping(_require(raw, "speech"), "speech")
+    speech = _as_mapping(
+        raw.get(
+            "speech",
+            {
+                "enabled": False,
+                "model_path": (
+                    "models/"
+                    "sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23"
+                ),
+                "sample_rate": 48000,
+                "block_size": 8000,
+                "device": None,
+                "command_cooldown_seconds": 2,
+            },
+        ),
+        "speech",
+    )
     identity = _as_mapping(_require(raw, "identity"), "identity")
     web = _as_mapping(_require(raw, "web"), "web")
     logging_config = _as_mapping(raw.get("logging", {}), "logging")
@@ -266,7 +282,7 @@ def load_config(path: Path) -> AppConfig:
                 "video.max_frame_age_seconds",
             ),
             warmup_seconds=_non_negative(
-                _require(video, "warmup_seconds"),
+                video.get("warmup_seconds", 1.5),
                 "video.warmup_seconds",
             ),
         ),
