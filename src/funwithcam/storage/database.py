@@ -1,8 +1,12 @@
 import sqlite3
+import threading
 from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
 from typing import Iterator
+
+
+_connection_init_lock = threading.RLock()
 
 
 class Database:
@@ -10,9 +14,10 @@ class Database:
         self.path = path.resolve()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(str(self.path), timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
+        with _connection_init_lock:
+            connection = sqlite3.connect(str(self.path), timeout=10)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
     @contextmanager

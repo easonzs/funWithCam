@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from funwithcam.domain.state_machine import WorkflowSnapshot
@@ -71,6 +72,23 @@ class DatabaseTest(unittest.TestCase):
                     "SELECT COUNT(*) FROM schema_migrations"
                 ).fetchone()[0]
         self.assertEqual(6, count)
+
+    def test_concurrent_connection_initialization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+
+            def open_and_close_connection():
+                with database.connection() as connection:
+                    return connection.execute("SELECT 1").fetchone()[0]
+
+            with ThreadPoolExecutor(max_workers=12) as executor:
+                results = list(executor.map(
+                    lambda _: open_and_close_connection(),
+                    range(48),
+                ))
+
+        self.assertEqual([1] * 48, results)
 
 
 if __name__ == "__main__":
