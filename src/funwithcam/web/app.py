@@ -3,7 +3,7 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -14,6 +14,11 @@ from fastapi.templating import Jinja2Templates
 
 from funwithcam.assistant_service import run_assistant
 from funwithcam.config import load_config
+from funwithcam.precheck import (
+    CameraPrecheckRunner,
+    PrecheckCoordinator,
+    PrecheckResult,
+)
 from funwithcam.speech import run_speech_service
 from funwithcam.storage.auth_repository import AuthRepository, csrf_matches
 from funwithcam.storage.database import Database
@@ -52,6 +57,9 @@ def create_app(
     config_path: Path,
     database_path: Path,
     assistant_enabled: bool = False,
+    precheck_runner: Optional[
+        Callable[[threading.Event], PrecheckResult]
+    ] = None,
 ) -> FastAPI:
     config = load_config(config_path)
     timezone = ZoneInfo(config.timezone)
@@ -61,6 +69,11 @@ def create_app(
     family = FamilyRepository(database)
     reminders = ReminderRepository(database)
     study_sessions = StudySessionRepository(database)
+    prechecks = PrecheckCoordinator(
+        study_sessions,
+        timezone,
+        precheck_runner or CameraPrecheckRunner(config, database_path),
+    )
     workflow = WorkflowRepository(database)
     web_root = Path(__file__).resolve().parent
     templates = Jinja2Templates(directory=str(web_root / "templates"))
@@ -82,7 +95,12 @@ def create_app(
             if config.speech.enabled:
                 speech_thread = threading.Thread(
                     target=_run_speech_thread,
-                    args=(config_path, database_path, stop_event),
+                    args=(
+                        config_path,
+                        database_path,
+                        stop_event,
+                        prechecks,
+                    ),
                     name="speech-service",
                     daemon=True,
                 )
@@ -96,6 +114,7 @@ def create_app(
                 assistant_thread.join(timeout=5)
             if speech_thread is not None:
                 speech_thread.join(timeout=5)
+            prechecks.close()
 
     app = FastAPI(
         title="FunWithCam",
@@ -189,6 +208,7 @@ def create_app(
                 "workflow_state": WORKFLOW_LABELS[workflow_value],
                 "workflow_value": workflow_value,
                 "study_session": study_sessions.get_latest(today.isoformat()),
+                "precheck_result": prechecks.latest(today.isoformat()),
                 "message": message,
                 "error": error,
             },
@@ -280,14 +300,14 @@ def create_app(
         now = datetime.now(timezone)
         try:
             if action == "start":
-                study_sessions.start(today, "web", now)
-                message = "学习记录已开始"
+                prechecks.request("start", today, "web", now)
+                message = "正在进行开始前检查，请在书桌前保持 5 秒"
             elif action == "pause":
                 study_sessions.pause(today, now)
                 message = "学习记录已暂停"
             elif action == "resume":
-                study_sessions.resume(today, now)
-                message = "学习记录已继续"
+                prechecks.request("resume", today, "web", now)
+                message = "正在进行开始前检查，请在书桌前保持 5 秒"
             elif action == "finish":
                 study_sessions.finish(today, now)
                 message = "学习记录已结束"
@@ -430,8 +450,14 @@ def _run_speech_thread(
     config_path: Path,
     database_path: Path,
     stop_event: threading.Event,
+    prechecks: PrecheckCoordinator,
 ) -> None:
     try:
-        run_speech_service(config_path, database_path, stop_event)
+        run_speech_service(
+            config_path,
+            database_path,
+            stop_event,
+            prechecks,
+        )
     except Exception:
         LOGGER.exception("speech service stopped unexpectedly")

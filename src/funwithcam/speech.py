@@ -1,4 +1,3 @@
-import json
 import logging
 import queue
 import threading
@@ -10,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from .audio import AudioOutput
 from .config import AppConfig, SpeechConfig, load_config
+from .precheck import PrecheckCoordinator, PrecheckResult
 from .storage.database import Database
 from .storage.family_repository import FamilyRepository
 from .storage.study_session_repository import StudySessionRepository
@@ -55,13 +55,19 @@ def parse_speech_command(text: str) -> Optional[str]:
 
 
 class SpeechCommandHandler:
-    def __init__(self, config: AppConfig, database_path: Path):
+    def __init__(
+        self,
+        config: AppConfig,
+        database_path: Path,
+        prechecks: PrecheckCoordinator,
+    ):
         database = Database(database_path)
         database.initialize()
         self._timezone = ZoneInfo(config.timezone)
         self._family = FamilyRepository(database)
         self._sessions = StudySessionRepository(database)
         self._audio = AudioOutput(config.audio.command)
+        self._prechecks = prechecks
 
     def handle(self, text: str) -> bool:
         command = parse_speech_command(text)
@@ -73,14 +79,30 @@ class SpeechCommandHandler:
         child_name = self._family.get_settings()["child_name"]
         try:
             if command == START:
-                self._sessions.start(session_date, "speech", now)
-                message = "{}，好的，开始记录学习。".format(child_name)
+                self._prechecks.request(
+                    "start",
+                    session_date,
+                    "speech",
+                    now,
+                    self._announce_precheck,
+                )
+                message = "{}，请在书桌前保持五秒，我先检查一下。".format(
+                    child_name
+                )
             elif command == PAUSE:
                 self._sessions.pause(session_date, now)
                 message = "{}，好的，先休息一下。".format(child_name)
             elif command == RESUME:
-                self._sessions.resume(session_date, now)
-                message = "{}，好的，继续记录学习。".format(child_name)
+                self._prechecks.request(
+                    "resume",
+                    session_date,
+                    "speech",
+                    now,
+                    self._announce_precheck,
+                )
+                message = "{}，请在书桌前保持五秒，我先检查一下。".format(
+                    child_name
+                )
             elif command == FINISH:
                 self._sessions.finish(session_date, now)
                 message = "{}，本次学习记录已经结束。".format(child_name)
@@ -103,8 +125,16 @@ class SpeechCommandHandler:
         self._audio.speak(message)
         return True
 
+    def _announce_precheck(self, result: PrecheckResult) -> None:
+        child_name = self._family.get_settings()["child_name"]
+        if result.passed:
+            message = "{}，检查通过，开始记录学习。".format(child_name)
+        else:
+            message = "{}，{}。".format(child_name, result.message)
+        self._audio.speak(message)
 
-class VoskSpeechListener:
+
+class SherpaSpeechListener:
     def __init__(
         self,
         config: SpeechConfig,
@@ -116,36 +146,58 @@ class VoskSpeechListener:
     def run(self, stop_event: threading.Event) -> None:
         try:
             import sounddevice
-            from vosk import KaldiRecognizer, Model
+            import sherpa_onnx
         except ImportError as exc:
             raise RuntimeError(
                 "speech dependencies are missing; install the speech extra"
             ) from exc
         if not self._config.model_path.is_dir():
             raise FileNotFoundError(
-                "Vosk model directory not found: {}".format(
+                "sherpa-onnx model directory not found: {}".format(
                     self._config.model_path
                 )
             )
 
-        audio_queue: queue.Queue[bytes] = queue.Queue()
+        encoder = self._config.model_path / "encoder-epoch-99-avg-1.int8.onnx"
+        decoder = self._config.model_path / "decoder-epoch-99-avg-1.onnx"
+        joiner = self._config.model_path / "joiner-epoch-99-avg-1.int8.onnx"
+        tokens = self._config.model_path / "tokens.txt"
+        for model_file in (encoder, decoder, joiner, tokens):
+            if not model_file.is_file():
+                raise FileNotFoundError(
+                    "sherpa-onnx model file not found: {}".format(model_file)
+                )
+
+        audio_queue: queue.Queue[object] = queue.Queue()
 
         def callback(indata, frames, callback_time, status) -> None:
             if status:
                 LOGGER.warning("microphone status: %s", status)
             if not AudioOutput.is_speaking():
-                audio_queue.put(bytes(indata))
+                audio_queue.put(indata.copy().reshape(-1))
 
-        model = Model(str(self._config.model_path))
-        recognizer = KaldiRecognizer(model, self._config.sample_rate)
+        recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+            tokens=str(tokens),
+            encoder=str(encoder),
+            decoder=str(decoder),
+            joiner=str(joiner),
+            num_threads=1,
+            sample_rate=16000,
+            feature_dim=80,
+            enable_endpoint_detection=True,
+            rule1_min_trailing_silence=1.5,
+            rule2_min_trailing_silence=0.8,
+            rule3_min_utterance_length=10,
+        )
+        stream = recognizer.create_stream()
         last_command = None
         last_command_at = 0.0
         LOGGER.info("starting local speech recognition")
-        with sounddevice.RawInputStream(
+        with sounddevice.InputStream(
             samplerate=self._config.sample_rate,
             blocksize=self._config.block_size,
             device=self._config.device,
-            dtype="int16",
+            dtype="float32",
             channels=1,
             callback=callback,
         ):
@@ -154,9 +206,15 @@ class VoskSpeechListener:
                     data = audio_queue.get(timeout=0.2)
                 except queue.Empty:
                     continue
-                if AudioOutput.is_speaking() or not recognizer.AcceptWaveform(data):
+                if AudioOutput.is_speaking():
                     continue
-                text = str(json.loads(recognizer.Result()).get("text", "")).strip()
+                stream.accept_waveform(self._config.sample_rate, data)
+                while recognizer.is_ready(stream):
+                    recognizer.decode_stream(stream)
+                if not recognizer.is_endpoint(stream):
+                    continue
+                text = str(recognizer.get_result(stream)).strip()
+                recognizer.reset(stream)
                 if not text:
                     continue
                 now = time.monotonic()
@@ -176,10 +234,11 @@ def run_speech_service(
     config_path: Path,
     database_path: Path,
     stop_event: threading.Event,
+    prechecks: PrecheckCoordinator,
 ) -> None:
     config = load_config(config_path)
-    handler = SpeechCommandHandler(config, database_path)
-    VoskSpeechListener(config.speech, handler.handle).run(stop_event)
+    handler = SpeechCommandHandler(config, database_path, prechecks)
+    SherpaSpeechListener(config.speech, handler.handle).run(stop_event)
 
 
 def run_speech_test(config_path: Path) -> None:
@@ -197,7 +256,7 @@ def run_speech_test(config_path: Path) -> None:
         return command is not None
 
     try:
-        VoskSpeechListener(config.speech, print_text).run(stop_event)
+        SherpaSpeechListener(config.speech, print_text).run(stop_event)
     except KeyboardInterrupt:
         stop_event.set()
 

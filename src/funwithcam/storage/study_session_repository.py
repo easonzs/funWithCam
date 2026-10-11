@@ -26,65 +26,130 @@ class StudySessionRepository:
             ).fetchone()
         return None if row is None else dict(row)
 
-    def start(self, session_date: str, source: str, now: datetime) -> int:
+    def request_start(self, session_date: str, now: datetime) -> None:
         timestamp = now.isoformat()
         with self._database.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             snapshot = self._load_snapshot(connection, session_date)
             snapshot = transition(snapshot, EventType.START_REQUESTED)
-            snapshot = transition(snapshot, EventType.PRECHECK_PASSED)
             if self._active_session(connection, session_date) is not None:
                 raise ValueError("已有进行中的学习记录")
-
-            cursor = connection.execute(
-                """
-                INSERT INTO study_sessions (
-                    session_date,
-                    state,
-                    started_at,
-                    start_source,
-                    created_at,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    session_date,
-                    snapshot.state.value,
-                    timestamp,
-                    source,
-                    timestamp,
-                    timestamp,
-                ),
-            )
-            session_id = int(cursor.lastrowid)
-            self._open_interval(connection, session_id, "STUDYING", timestamp)
             self._save_snapshot(connection, session_date, snapshot, timestamp)
-            reminder_update = connection.execute(
-                """
-                UPDATE daily_status
-                SET second_reminder_at = ?, updated_at = ?
-                WHERE session_date = ? AND second_reminder_at IS NULL
-                """,
-                (timestamp, timestamp, session_date),
-            )
-            if reminder_update.rowcount:
+            connection.commit()
+
+    def request_resume(self, session_date: str, now: datetime) -> None:
+        timestamp = now.isoformat()
+        with self._database.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            snapshot = self._load_snapshot(connection, session_date)
+            snapshot = transition(snapshot, EventType.RESUME_REQUESTED)
+            self._require_active_session(connection, session_date)
+            self._save_snapshot(connection, session_date, snapshot, timestamp)
+            connection.commit()
+
+    def confirm_precheck(
+        self,
+        session_date: str,
+        source: str,
+        now: datetime,
+    ) -> int:
+        timestamp = now.isoformat()
+        with self._database.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            snapshot = self._load_snapshot(connection, session_date)
+            return_state = snapshot.return_state
+            snapshot = transition(snapshot, EventType.PRECHECK_PASSED)
+            if return_state == WorkflowState.WAITING_TO_START:
+                session_id = self._create_session(
+                    connection,
+                    session_date,
+                    source,
+                    snapshot,
+                    timestamp,
+                )
+            else:
+                session = self._require_active_session(connection, session_date)
+                session_id = int(session["id"])
+                self._close_interval(connection, session_id, timestamp)
+                self._open_interval(connection, session_id, "STUDYING", timestamp)
                 connection.execute(
                     """
-                    INSERT INTO reminders (
-                        session_date,
-                        study_session_id,
-                        reminder_type,
-                        status,
-                        cancellation_reason,
-                        payload_json,
-                        created_at,
-                        updated_at
-                    ) VALUES (?, ?, 'second_reminder', 'cancelled',
-                              'study_started', '{}', ?, ?)
+                    UPDATE study_sessions
+                    SET state = ?, updated_at = ?
+                    WHERE id = ?
                     """,
-                    (session_date, session_id, timestamp, timestamp),
+                    (snapshot.state.value, timestamp, session_id),
                 )
+            self._save_snapshot(connection, session_date, snapshot, timestamp)
             connection.commit()
+        return session_id
+
+    def cancel_precheck(self, session_date: str, now: datetime) -> None:
+        timestamp = now.isoformat()
+        with self._database.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            snapshot = self._load_snapshot(connection, session_date)
+            snapshot = transition(snapshot, EventType.PRECHECK_CANCELLED)
+            self._save_snapshot(connection, session_date, snapshot, timestamp)
+            connection.commit()
+
+    def _create_session(
+        self,
+        connection,
+        session_date: str,
+        source: str,
+        snapshot: WorkflowSnapshot,
+        timestamp: str,
+    ) -> int:
+        if self._active_session(connection, session_date) is not None:
+            raise ValueError("已有进行中的学习记录")
+        cursor = connection.execute(
+            """
+            INSERT INTO study_sessions (
+                session_date,
+                state,
+                started_at,
+                start_source,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_date,
+                snapshot.state.value,
+                timestamp,
+                source,
+                timestamp,
+                timestamp,
+            ),
+        )
+        session_id = int(cursor.lastrowid)
+        self._open_interval(connection, session_id, "STUDYING", timestamp)
+        reminder_update = connection.execute(
+            """
+            UPDATE daily_status
+            SET second_reminder_at = ?, updated_at = ?
+            WHERE session_date = ? AND second_reminder_at IS NULL
+            """,
+            (timestamp, timestamp, session_date),
+        )
+        if reminder_update.rowcount:
+            connection.execute(
+                """
+                INSERT INTO reminders (
+                    session_date,
+                    study_session_id,
+                    reminder_type,
+                    status,
+                    cancellation_reason,
+                    payload_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, 'second_reminder', 'cancelled',
+                          'study_started', '{}', ?, ?)
+                """,
+                (session_date, session_id, timestamp, timestamp),
+            )
         return session_id
 
     def pause(self, session_date: str, now: datetime) -> None:
@@ -93,15 +158,6 @@ class StudySessionRepository:
             now,
             EventType.PAUSE_REQUESTED,
             "PAUSED",
-        )
-
-    def resume(self, session_date: str, now: datetime) -> None:
-        self._change_state(
-            session_date,
-            now,
-            EventType.RESUME_REQUESTED,
-            "STUDYING",
-            pass_precheck=True,
         )
 
     def finish(self, session_date: str, now: datetime) -> None:
@@ -137,15 +193,12 @@ class StudySessionRepository:
         now: datetime,
         event_type: EventType,
         interval_type: str,
-        pass_precheck: bool = False,
     ) -> None:
         timestamp = now.isoformat()
         with self._database.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             snapshot = self._load_snapshot(connection, session_date)
             snapshot = transition(snapshot, event_type)
-            if pass_precheck:
-                snapshot = transition(snapshot, EventType.PRECHECK_PASSED)
             session = self._require_active_session(connection, session_date)
             session_id = int(session["id"])
             self._close_interval(connection, session_id, timestamp)

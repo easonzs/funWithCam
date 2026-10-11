@@ -32,6 +32,14 @@ class PresenceConfig:
 
 
 @dataclass(frozen=True)
+class PrecheckConfig:
+    duration_seconds: float
+    timeout_seconds: float
+    min_valid_frame_ratio: float
+    min_brightness: float
+
+
+@dataclass(frozen=True)
 class AudioConfig:
     command: Tuple[str, ...]
     camera_test_text: str
@@ -81,6 +89,7 @@ class AppConfig:
     study_area: StudyAreaConfig
     person: PersonConfig
     presence: PresenceConfig
+    precheck: PrecheckConfig
     audio: AudioConfig
     speech: SpeechConfig
     identity: IdentityConfig
@@ -159,6 +168,18 @@ def load_config(path: Path) -> AppConfig:
     study_area = _as_mapping(_require(raw, "study_area"), "study_area")
     person = _as_mapping(_require(raw, "person"), "person")
     presence = _as_mapping(_require(raw, "presence"), "presence")
+    precheck = _as_mapping(
+        raw.get(
+            "precheck",
+            {
+                "duration_seconds": 5,
+                "timeout_seconds": 15,
+                "min_valid_frame_ratio": 0.8,
+                "min_brightness": 45,
+            },
+        ),
+        "precheck",
+    )
     audio = _as_mapping(_require(raw, "audio"), "audio")
     speech = _as_mapping(_require(raw, "speech"), "speech")
     identity = _as_mapping(_require(raw, "identity"), "identity")
@@ -185,6 +206,17 @@ def load_config(path: Path) -> AppConfig:
         raise ValueError("audio.command must contain a {text} argument")
 
     project_root = path.resolve().parent.parent
+
+    precheck_duration = _positive(
+        _require(precheck, "duration_seconds"),
+        "precheck.duration_seconds",
+    )
+    precheck_timeout = _positive(
+        _require(precheck, "timeout_seconds"),
+        "precheck.timeout_seconds",
+    )
+    if precheck_timeout <= precheck_duration:
+        raise ValueError("precheck timeout must be longer than duration")
 
     return AppConfig(
         timezone=str(_require(raw, "timezone")),
@@ -228,6 +260,18 @@ def load_config(path: Path) -> AppConfig:
             max_center_jump=_ratio(
                 _require(presence, "max_center_jump"),
                 "presence.max_center_jump",
+            ),
+        ),
+        precheck=PrecheckConfig(
+            duration_seconds=precheck_duration,
+            timeout_seconds=precheck_timeout,
+            min_valid_frame_ratio=_ratio(
+                _require(precheck, "min_valid_frame_ratio"),
+                "precheck.min_valid_frame_ratio",
+            ),
+            min_brightness=_brightness(
+                _require(precheck, "min_brightness"),
+                "precheck.min_brightness",
             ),
         ),
         audio=AudioConfig(
@@ -345,4 +389,11 @@ def _speech_device(value: object) -> Optional[Union[int, str]]:
     if isinstance(value, (int, str)):
         return value
     raise ValueError("speech.device must be null, an integer, or a string")
+
+
+def _brightness(value: object, key: str) -> float:
+    number = float(value)
+    if not 0 <= number <= 255:
+        raise ValueError("{} must be between 0 and 255".format(key))
+    return number
 

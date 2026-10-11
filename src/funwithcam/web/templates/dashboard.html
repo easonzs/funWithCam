@@ -26,6 +26,9 @@
 
   {% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
   {% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+  {% if precheck_result and not precheck_result.passed %}
+    <p class="notice notice-error" role="alert">{{ precheck_result.message }}</p>
+  {% endif %}
 
   <nav class="section-nav" aria-label="页面分区">
     <a href="#today-list">今日安排</a>
@@ -174,6 +177,8 @@
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <button class="button button-danger" type="submit">结束学习</button>
           </form>
+        {% elif workflow_value == 'PRECHECK' %}
+          <p>正在检查视频、书桌区域、单人画面和光线，请稍候刷新。</p>
         {% endif %}
       </div>
     </div>
@@ -324,4 +329,9 @@
     </form>
   </section>
 </main>
+{% if workflow_value == 'PRECHECK' %}
+  <script>
+    window.setTimeout(function () { window.location.reload(); }, 2000);
+  </script>
+{% endif %}
 {% endblock %}

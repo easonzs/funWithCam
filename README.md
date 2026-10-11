@@ -23,7 +23,8 @@ FunWithCam 是一个运行在家庭局域网内的本地学习助理。
 - 上学日/休息日默认提醒时间与当天覆盖；
 - 身份、日程和 `say` 集成的首次简报与第二次提醒；
 - Web 开始、休息、继续、结束学习及会话区间记录；
-- 可选的 Vosk 本地中文语音口令；
+- 开始和继续学习前的异步视频、区域、单人、身份和光线检查；
+- 可选的 sherpa-onnx 本地中文语音口令；
 - 单元测试。
 
 ## 本地开发
@@ -100,7 +101,7 @@ http://<MacBook 的局域网 IP>:8000
 
 ## 本地语音口令
 
-语音功能使用 Vosk 和 MacBook 麦克风，默认关闭，不影响 Web 和摄像头提醒。
+语音功能使用 sherpa-onnx 和 MacBook 麦克风，默认关闭，不影响 Web 和摄像头提醒。
 
 安装可选依赖：
 
@@ -108,10 +109,11 @@ http://<MacBook 的局域网 IP>:8000
 uv pip install -e '.[speech]'
 ```
 
-下载并解压 `vosk-model-small-cn-0.22` 到：
+从 sherpa-onnx 官方模型页下载并解压
+`sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23` 到：
 
 ```text
-models/vosk-model-small-cn-0.22
+models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
 ```
 
 然后修改本机 `config/config.yaml`：
@@ -119,8 +121,8 @@ models/vosk-model-small-cn-0.22
 ```yaml
 speech:
   enabled: true
-  model_path: models/vosk-model-small-cn-0.22
-  sample_rate: 16000
+  model_path: models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
+  sample_rate: 48000
   block_size: 8000
   device:
   command_cooldown_seconds: 2
@@ -234,7 +236,7 @@ funwithcam serve \
 - `unknown` 或多人画面不触发简报；
 - 第二次提醒只在首次简报已经完成后执行；
 - 第二次提醒晚于计划超过 30 分钟，或计划时间早于实际首次简报时，不补播旧提醒；
-- 未启用 Vosk 时仍可使用 Web 按钮控制学习记录。
+- 未启用本地语音识别时仍可使用 Web 按钮控制学习记录。
 
 诊断时也可以只运行摄像头提醒服务：
 

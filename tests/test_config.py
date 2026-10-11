@@ -23,13 +23,18 @@ presence:
   confirm_seconds: 5
   allowed_missed_seconds: 1
   max_center_jump: 0.2
+precheck:
+  duration_seconds: 5
+  timeout_seconds: 15
+  min_valid_frame_ratio: 0.8
+  min_brightness: 45
 audio:
   command: ["say", "{text}"]
   camera_test_text: "测试成功"
 speech:
   enabled: false
-  model_path: models/vosk-cn
-  sample_rate: 16000
+  model_path: models/sherpa-zh
+  sample_rate: 48000
   block_size: 8000
   device:
   command_cooldown_seconds: 2
@@ -70,12 +75,14 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(4, config.video.inference_fps)
         self.assertEqual(1.5, config.video.warmup_seconds)
         self.assertEqual((0.2, 0.15, 0.8, 0.95), config.study_area.rect)
+        self.assertEqual(5, config.precheck.duration_seconds)
+        self.assertEqual(45, config.precheck.min_brightness)
         self.assertEqual(3, config.identity.confirmation_frames)
         self.assertEqual("yunet.onnx", config.identity.detector_model.name)
         self.assertTrue(config.identity.save_debug_frames)
         self.assertEqual("face_debug", config.identity.debug_dir.name)
         self.assertFalse(config.speech.enabled)
-        self.assertEqual("vosk-cn", config.speech.model_path.name)
+        self.assertEqual("sherpa-zh", config.speech.model_path.name)
         self.assertEqual(8000, config.web.port)
         self.assertEqual("DEBUG", config.log_level)
 
@@ -92,6 +99,23 @@ class ConfigTest(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 load_config(path)
+
+    def test_uses_precheck_defaults_for_existing_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            start = VALID_CONFIG.index("precheck:")
+            end = VALID_CONFIG.index("audio:")
+            path.write_text(
+                VALID_CONFIG[:start] + VALID_CONFIG[end:],
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+        self.assertEqual(5, config.precheck.duration_seconds)
+        self.assertEqual(15, config.precheck.timeout_seconds)
+        self.assertEqual(0.8, config.precheck.min_valid_frame_ratio)
+        self.assertEqual(45, config.precheck.min_brightness)
 
 
 if __name__ == "__main__":

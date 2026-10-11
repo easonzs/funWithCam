@@ -24,14 +24,25 @@ class StudySessionRepositoryTest(unittest.TestCase):
                 started_at,
             )
 
-            session_id = sessions.start("2026-10-12", "web", started_at)
+            sessions.request_start("2026-10-12", started_at)
+            self.assertIsNone(sessions.get_latest("2026-10-12"))
+            session_id = sessions.confirm_precheck(
+                "2026-10-12",
+                "web",
+                started_at + timedelta(seconds=5),
+            )
             sessions.pause(
                 "2026-10-12",
                 started_at + timedelta(minutes=20),
             )
-            sessions.resume(
+            sessions.request_resume(
                 "2026-10-12",
                 started_at + timedelta(minutes=25),
+            )
+            sessions.confirm_precheck(
+                "2026-10-12",
+                "web",
+                started_at + timedelta(minutes=25, seconds=5),
             )
             sessions.finish(
                 "2026-10-12",
@@ -83,16 +94,54 @@ class StudySessionRepositoryTest(unittest.TestCase):
                 now,
             )
 
-            sessions.start("2026-10-12", "web", now)
-            sessions.finish("2026-10-12", now + timedelta(minutes=20))
-            second_id = sessions.start(
+            sessions.request_start("2026-10-12", now)
+            sessions.confirm_precheck(
                 "2026-10-12",
                 "web",
+                now + timedelta(seconds=5),
+            )
+            sessions.finish("2026-10-12", now + timedelta(minutes=20))
+            sessions.request_start(
+                "2026-10-12",
                 now + timedelta(minutes=30),
+            )
+            second_id = sessions.confirm_precheck(
+                "2026-10-12",
+                "web",
+                now + timedelta(minutes=30, seconds=5),
             )
             latest = sessions.get_latest("2026-10-12")
 
         self.assertEqual(second_id, latest["id"])
+
+    def test_cancelled_precheck_does_not_create_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+            workflow = WorkflowRepository(database)
+            sessions = StudySessionRepository(database)
+            now = datetime(2026, 10, 12, 18, 0, tzinfo=timezone.utc)
+            workflow.save(
+                "2026-10-12",
+                WorkflowSnapshot(WorkflowState.WAITING_TO_START),
+                now,
+            )
+
+            sessions.request_start("2026-10-12", now)
+            self.assertEqual(
+                WorkflowState.PRECHECK,
+                workflow.load("2026-10-12").state,
+            )
+            sessions.cancel_precheck(
+                "2026-10-12",
+                now + timedelta(seconds=5),
+            )
+
+            self.assertIsNone(sessions.get_latest("2026-10-12"))
+            self.assertEqual(
+                WorkflowState.WAITING_TO_START,
+                workflow.load("2026-10-12").state,
+            )
 
 
 if __name__ == "__main__":

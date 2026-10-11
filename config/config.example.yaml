@@ -22,14 +22,22 @@ presence:
   allowed_missed_seconds: 1
   max_center_jump: 0.20
 
+precheck:
+  # 点击或说出“开始/继续学习”后，连续检查书桌区域。
+  duration_seconds: 5
+  timeout_seconds: 15
+  min_valid_frame_ratio: 0.80
+  # 0～255，取书桌区域的平均亮度。
+  min_brightness: 45
+
 audio:
   command: ["say", "{text}"]
   camera_test_text: "摄像头人物检测和语音播放测试成功。"
 
 speech:
   enabled: false
-  model_path: models/vosk-model-small-cn-0.22
-  sample_rate: 16000
+  model_path: models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
+  sample_rate: 48000
   block_size: 8000
   device:
   command_cooldown_seconds: 2
