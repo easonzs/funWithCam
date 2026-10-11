@@ -5,6 +5,7 @@ from pathlib import Path
 
 from funwithcam.domain.state_machine import WorkflowSnapshot
 from funwithcam.domain.states import WorkflowState
+from funwithcam.storage.calibration_repository import CalibrationRepository
 from funwithcam.storage.database import Database
 from funwithcam.storage.study_session_repository import StudySessionRepository
 from funwithcam.storage.workflow_repository import WorkflowRepository
@@ -142,6 +143,57 @@ class StudySessionRepositoryTest(unittest.TestCase):
                 WorkflowState.WAITING_TO_START,
                 workflow.load("2026-10-12").state,
             )
+
+    def test_active_calibration_blocks_starting_study(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+            workflow = WorkflowRepository(database)
+            sessions = StudySessionRepository(database)
+            now = datetime(2026, 10, 12, 18, 0, tzinfo=timezone.utc)
+            workflow.save(
+                "2026-10-12",
+                WorkflowSnapshot(WorkflowState.WAITING_TO_START),
+                now,
+            )
+            CalibrationRepository(database).create_draft(now)
+
+            with self.assertRaisesRegex(ValueError, "基准正在录入"):
+                sessions.request_start("2026-10-12", now)
+
+    def test_new_session_records_latest_calibration_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+            workflow = WorkflowRepository(database)
+            sessions = StudySessionRepository(database)
+            now = datetime(2026, 10, 12, 18, 0, tzinfo=timezone.utc)
+            workflow.save(
+                "2026-10-12",
+                WorkflowSnapshot(WorkflowState.WAITING_TO_START),
+                now,
+            )
+            with database.connection() as connection:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO calibration_versions (
+                        calibration_json, quality_json, created_at
+                    ) VALUES ('{}', '{}', ?)
+                    """,
+                    (now.isoformat(),),
+                )
+                version_id = int(cursor.lastrowid)
+                connection.commit()
+
+            sessions.request_start("2026-10-12", now)
+            sessions.confirm_precheck(
+                "2026-10-12",
+                "web",
+                now + timedelta(seconds=5),
+            )
+            latest = sessions.get_latest("2026-10-12")
+
+        self.assertEqual(version_id, latest["calibration_version_id"])
 
 
 if __name__ == "__main__":

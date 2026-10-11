@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}动作基准录入 · FunWithCam{% endblock %}
+{% block body %}
+<header class="topbar">
+  <div>
+    <a class="wordmark" href="/">FunWithCam</a>
+    <span class="privacy-label">动作基准录入</span>
+  </div>
+  <div class="topbar-actions">
+    <a class="button button-quiet" href="/">返回今日安排</a>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button button-quiet" type="submit">退出</button>
+    </form>
+  </div>
+</header>
+
+<main class="calibration-shell">
+  <header class="calibration-heading">
+    <p class="eyebrow">一次录入，后续长期使用</p>
+    <h1>录入孩子的动作基准</h1>
+    <p>每一步会采集约 10 秒，从多帧画面计算正常范围。家长确认图片后，基准才会生效。</p>
+  </header>
+
+  {% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+  {% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+  {% if not draft %}
+    <section class="calibration-welcome">
+      <div>
+        <h2>开始前请准备</h2>
+        <ul class="plain-checklist">
+          <li>让孩子独自在已配置的书桌区域内。</li>
+          <li>先面向摄像头，方便系统确认孩子身份。</li>
+          <li>家长可在旁边操作手机，但不要进入摄像头画面。</li>
+          <li>采集期间保持自然，不需要刻意追求“标准姿势”。</li>
+        </ul>
+      </div>
+      {% if study_active %}
+        <p class="notice notice-error" role="alert">学习记录正在进行，请先结束学习再录入基准。</p>
+      {% else %}
+        <form method="post" action="/calibration/start">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="button button-primary" type="submit">开始四步录入</button>
+        </form>
+      {% endif %}
+      {% if latest_version %}
+        <p class="version-note">最近基准：版本 {{ latest_version.id }}，保存于 {{ latest_version.created_at[:16].replace('T', ' ') }}</p>
+      {% endif %}
+    </section>
+  {% else %}
+    <ol class="step-progress" aria-label="基准录入进度">
+      {% for item in steps %}
+        {% set step_data = draft.steps[item.key] %}
+        <li class="{% if step_data.status == 'confirmed' %}is-complete{% elif draft.current_step == item.key and draft.status != 'completed' %}is-current{% endif %}">
+          <span class="step-number" aria-hidden="true">{% if step_data.status == 'confirmed' %}✓{% else %}{{ loop.index }}{% endif %}</span>
+          <span>
+            <strong>{{ item.label }}</strong>
+            <small>
+              {% if step_data.status == 'confirmed' %}已确认
+              {% elif draft.current_step == item.key and draft.status == 'capturing' %}采集中
+              {% elif draft.current_step == item.key and draft.status == 'review' %}待确认
+              {% elif draft.current_step == item.key and draft.status == 'error' %}需要重试
+              {% else %}待录入{% endif %}
+            </small>
+          </span>
+        </li>
+      {% endfor %}
+    </ol>
+
+    {% if draft.status == 'completed' %}
+      <section class="completion-panel">
+        <span class="completion-mark" aria-hidden="true">✓</span>
+        <div>
+          <h2>四项基准已保存</h2>
+          <p>新版本已经生效。图片和历史版本会继续保存在这台 MacBook，不会自动删除。</p>
+        </div>
+      </section>
+      <div class="calibration-gallery">
+        {% for item in steps %}
+          {% set step_data = draft.steps[item.key] %}
+          <article class="baseline-card">
+            <div class="baseline-card-heading">
+              <h2>{{ item.label }}</h2>
+              <span>已确认</span>
+            </div>
+            <div class="image-stage image-stage-small">
+              <img
+                src="/calibration/image/{{ draft.id }}/{{ step_data.annotated_filename }}"
+                alt="{{ item.label }}标注图"
+                loading="lazy"
+              >
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+      <form method="post" action="/calibration/start" class="new-calibration">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="button" type="submit" {% if study_active %}disabled{% endif %}>重新录入一套新基准</button>
+        {% if study_active %}<small>请先结束正在进行的学习记录。</small>{% endif %}
+      </form>
+    {% else %}
+      {% set step_data = draft.steps[draft.current_step] %}
+      <section class="calibration-workspace">
+        <div class="capture-column">
+          <div class="image-stage">
+            {% if draft.status == 'review' %}
+              <img
+                id="calibration-preview"
+                src="/calibration/image/{{ draft.id }}/{{ step_data.annotated_filename }}"
+                data-annotated="/calibration/image/{{ draft.id }}/{{ step_data.annotated_filename }}"
+                data-original="/calibration/image/{{ draft.id }}/{{ step_data.original_filename }}"
+                alt="{{ current.label }}标注图"
+              >
+              <div class="image-legend" aria-label="标注图图例">
+                <span><i class="legend-area"></i>书桌区域</span>
+                <span><i class="legend-pose"></i>姿态关键点</span>
+                <span><i class="legend-face"></i>人脸位置</span>
+              </div>
+            {% elif draft.status == 'capturing' %}
+              <div class="capture-status" role="status">
+                <span class="capture-pulse" aria-hidden="true"></span>
+                <strong>正在采集</strong>
+                <p>通常需要约 10 秒，请让孩子保持自然动作。</p>
+              </div>
+            {% elif draft.status == 'error' %}
+              <div class="capture-status">
+                <span class="capture-error-mark" aria-hidden="true">!</span>
+                <strong>这一步没有采集成功</strong>
+                <p>{{ draft.error_message }}</p>
+              </div>
+            {% else %}
+              <div class="capture-status">
+                <span class="camera-placeholder" aria-hidden="true"></span>
+                <strong>准备采集 {{ current.label }}</strong>
+                <p>开始后系统会自动挑选最能代表正常状态的一帧。</p>
+              </div>
+            {% endif %}
+          </div>
+
+          {% if draft.status == 'review' %}
+            <div class="image-toggle" role="group" aria-label="图片显示方式">
+              <button class="is-active" type="button" data-view="annotated" aria-pressed="true">查看标注图</button>
+              <button type="button" data-view="original" aria-pressed="false">查看原图</button>
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="step-panel">
+          <p class="step-kicker">第 {{ current_number }} 步，共 4 步</p>
+          <h2>{{ current.label }}</h2>
+          <p class="step-instruction">{{ current.instruction }}</p>
+
+          {% if draft.status == 'review' %}
+            <div class="quality-panel">
+              <strong>本次采集情况</strong>
+              <dl>
+                <div>
+                  <dt>有效画面</dt>
+                  <dd>{{ step_data.quality.valid_samples }} 帧</dd>
+                </div>
+                <div>
+                  <dt>采集有效率</dt>
+                  <dd>{{ (step_data.quality.valid_ratio * 100)|round|int }}%</dd>
+                </div>
+                {% if step_data.features.brightness %}
+                  <div>
+                    <dt>书桌亮度</dt>
+                    <dd>{{ step_data.features.brightness.median|round(1) }}</dd>
+                  </div>
+                {% endif %}
+              </dl>
+              <p>请重点确认画面里只有孩子、动作自然、书桌区域和关键点位置合理。</p>
+            </div>
+            <div class="primary-actions">
+              <form method="post" action="/calibration/confirm">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="draft_id" value="{{ draft.id }}">
+                <button class="button button-primary" type="submit">确认此步骤</button>
+              </form>
+              <form method="post" action="/calibration/retry">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="draft_id" value="{{ draft.id }}">
+                <button class="button" type="submit">重新采集</button>
+              </form>
+            </div>
+          {% elif draft.status == 'error' %}
+            <div class="tip-panel">
+              <strong>重试前建议</strong>
+              <p>让家长退出画面，孩子先看向摄像头，再按当前步骤保持自然动作。</p>
+            </div>
+            <form method="post" action="/calibration/retry">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="draft_id" value="{{ draft.id }}">
+              <button class="button button-primary" type="submit">准备重新采集</button>
+            </form>
+          {% elif draft.status == 'capturing' %}
+            <button class="button button-primary" type="button" disabled>采集中，请稍候</button>
+          {% else %}
+            <form method="post" action="/calibration/capture">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="draft_id" value="{{ draft.id }}">
+              <input type="hidden" name="step" value="{{ draft.current_step }}">
+              <button class="button button-primary" type="submit">开始采集</button>
+            </form>
+          {% endif %}
+
+          {% if draft.status != 'capturing' %}
+            <form
+              method="post"
+              action="/calibration/cancel"
+              class="cancel-calibration"
+              onsubmit="return confirm('确认取消本次录入？已采集图片会保留，但不会生成新基准版本。')"
+            >
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="draft_id" value="{{ draft.id }}">
+              <button class="text-button" type="submit">取消本次录入</button>
+            </form>
+          {% endif %}
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+</main>
+
+{% if draft and draft.status == 'capturing' %}
+  <script>
+    window.setTimeout(function () { window.location.reload(); }, 1800);
+  </script>
+{% endif %}
+{% if draft and draft.status == 'review' %}
+  <script>
+    (function () {
+      var image = document.getElementById("calibration-preview");
+      var buttons = document.querySelectorAll("[data-view]");
+      buttons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          var view = button.dataset.view;
+          image.src = image.dataset[view];
+          image.alt = "{{ current.label }}" + (view === "annotated" ? "标注图" : "原图");
+          buttons.forEach(function (item) {
+            var active = item === button;
+            item.classList.toggle("is-active", active);
+            item.setAttribute("aria-pressed", active ? "true" : "false");
+          });
+        });
+      });
+    }());
+  </script>
+{% endif %}
+{% endblock %}

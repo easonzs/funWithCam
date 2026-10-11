@@ -34,6 +34,8 @@ class StudySessionRepository:
             snapshot = transition(snapshot, EventType.START_REQUESTED)
             if self._active_session(connection, session_date) is not None:
                 raise ValueError("已有进行中的学习记录")
+            if self._active_calibration(connection) is not None:
+                raise ValueError("孩子动作基准正在录入，请先完成或取消")
             self._save_snapshot(connection, session_date, snapshot, timestamp)
             connection.commit()
 
@@ -44,6 +46,8 @@ class StudySessionRepository:
             snapshot = self._load_snapshot(connection, session_date)
             snapshot = transition(snapshot, EventType.RESUME_REQUESTED)
             self._require_active_session(connection, session_date)
+            if self._active_calibration(connection) is not None:
+                raise ValueError("孩子动作基准正在录入，请先完成或取消")
             self._save_snapshot(connection, session_date, snapshot, timestamp)
             connection.commit()
 
@@ -110,15 +114,17 @@ class StudySessionRepository:
                 state,
                 started_at,
                 start_source,
+                calibration_version_id,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_date,
                 snapshot.state.value,
                 timestamp,
                 source,
+                self._latest_calibration_version_id(connection),
                 timestamp,
                 timestamp,
             ),
@@ -276,6 +282,28 @@ class StudySessionRepository:
         if session is None:
             raise ValueError("今天没有进行中的学习记录")
         return session
+
+    def _active_calibration(self, connection):
+        return connection.execute(
+            """
+            SELECT id
+            FROM calibration_drafts
+            WHERE status IN ('ready', 'capturing', 'review', 'error')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    def _latest_calibration_version_id(self, connection):
+        row = connection.execute(
+            """
+            SELECT id
+            FROM calibration_versions
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        return None if row is None else int(row["id"])
 
     def _open_interval(
         self,

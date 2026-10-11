@@ -8,11 +8,20 @@ from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from funwithcam.assistant_service import run_assistant
+from funwithcam.calibration import (
+    CalibrationCaptureResult,
+    CalibrationCoordinator,
+    CameraCalibrationRunner,
+)
+from funwithcam.calibration_steps import (
+    CALIBRATION_STEP_BY_KEY,
+    CALIBRATION_STEPS,
+)
 from funwithcam.config import load_config
 from funwithcam.precheck import (
     CameraPrecheckRunner,
@@ -21,6 +30,7 @@ from funwithcam.precheck import (
 )
 from funwithcam.speech import run_speech_service
 from funwithcam.storage.auth_repository import AuthRepository, csrf_matches
+from funwithcam.storage.calibration_repository import CalibrationRepository
 from funwithcam.storage.database import Database
 from funwithcam.storage.family_repository import FamilyRepository
 from funwithcam.storage.reminder_repository import ReminderRepository
@@ -60,6 +70,12 @@ def create_app(
     precheck_runner: Optional[
         Callable[[threading.Event], PrecheckResult]
     ] = None,
+    calibration_runner: Optional[
+        Callable[
+            [str, str, threading.Event],
+            CalibrationCaptureResult,
+        ]
+    ] = None,
 ) -> FastAPI:
     config = load_config(config_path)
     timezone = ZoneInfo(config.timezone)
@@ -69,10 +85,18 @@ def create_app(
     family = FamilyRepository(database)
     reminders = ReminderRepository(database)
     study_sessions = StudySessionRepository(database)
+    calibrations = CalibrationRepository(database)
+    calibrations.recover_interrupted(datetime.now(timezone))
     prechecks = PrecheckCoordinator(
         study_sessions,
         timezone,
         precheck_runner or CameraPrecheckRunner(config, database_path),
+    )
+    calibration_coordinator = CalibrationCoordinator(
+        calibrations,
+        timezone,
+        calibration_runner
+        or CameraCalibrationRunner(config, database_path),
     )
     workflow = WorkflowRepository(database)
     web_root = Path(__file__).resolve().parent
@@ -115,6 +139,7 @@ def create_app(
             if speech_thread is not None:
                 speech_thread.join(timeout=5)
             prechecks.close()
+            calibration_coordinator.close()
 
     app = FastAPI(
         title="FunWithCam",
@@ -209,10 +234,146 @@ def create_app(
                 "workflow_value": workflow_value,
                 "study_session": study_sessions.get_latest(today.isoformat()),
                 "precheck_result": prechecks.latest(today.isoformat()),
+                "calibration_version": calibrations.get_latest_version(),
                 "message": message,
                 "error": error,
             },
         )
+
+    @app.get("/calibration", response_class=HTMLResponse)
+    def calibration_page(
+        request: Request,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        draft = (
+            calibrations.get_active()
+            or calibrations.get_latest_completed_draft()
+        )
+        current = None
+        current_number = None
+        if draft is not None:
+            current = CALIBRATION_STEP_BY_KEY[draft["current_step"]]
+            current_number = next(
+                index
+                for index, item in enumerate(CALIBRATION_STEPS, start=1)
+                if item["key"] == draft["current_step"]
+            )
+        return templates.TemplateResponse(
+            request,
+            "calibration.html",
+            {
+                "username": session.username,
+                "csrf": session.csrf_token,
+                "draft": draft,
+                "current": current,
+                "current_number": current_number,
+                "steps": CALIBRATION_STEPS,
+                "latest_version": calibrations.get_latest_version(),
+                "study_active": calibrations.has_active_study_session(),
+                "message": message,
+                "error": error,
+            },
+        )
+
+    @app.post("/calibration/start")
+    async def start_calibration(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            calibrations.create_draft(datetime.now(timezone))
+        except ValueError as exc:
+            return _redirect("/calibration", error=str(exc))
+        return _redirect(
+            "/calibration",
+            message="基准录入已建立，请从正常坐姿开始",
+        )
+
+    @app.post("/calibration/capture")
+    async def capture_calibration_step(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        draft_id = str(form.get("draft_id", ""))
+        step = str(form.get("step", ""))
+        try:
+            calibration_coordinator.request(
+                draft_id,
+                step,
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/calibration", error=str(exc))
+        return _redirect(
+            "/calibration",
+            message="正在采集，通常需要约 10 秒",
+        )
+
+    @app.post("/calibration/confirm")
+    async def confirm_calibration_step(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            version_id = calibrations.confirm_step(
+                str(form.get("draft_id", "")),
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/calibration", error=str(exc))
+        if version_id is not None:
+            return _redirect(
+                "/calibration",
+                message="四项基准已保存为版本 {}".format(version_id),
+            )
+        return _redirect(
+            "/calibration",
+            message="这一步已确认，请继续下一步",
+        )
+
+    @app.post("/calibration/retry")
+    async def retry_calibration_step(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            calibrations.retry_step(
+                str(form.get("draft_id", "")),
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/calibration", error=str(exc))
+        return _redirect("/calibration", message="可以重新采集当前步骤")
+
+    @app.post("/calibration/cancel")
+    async def cancel_calibration(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            calibrations.cancel(
+                str(form.get("draft_id", "")),
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/calibration", error=str(exc))
+        return _redirect(
+            "/calibration",
+            message="本次录入已取消，已经采集的图片仍保留在本机",
+        )
+
+    @app.get("/calibration/image/{draft_id}/{filename}")
+    def calibration_image(draft_id: str, filename: str, request: Request):
+        _require_session(request, auth, timezone)
+        if not calibrations.image_filename_allowed(draft_id, filename):
+            raise HTTPException(status_code=404, detail="image not found")
+        draft_dir = (config.calibration.image_dir / draft_id).resolve()
+        image_path = (draft_dir / filename).resolve()
+        if image_path.parent != draft_dir or not image_path.is_file():
+            raise HTTPException(status_code=404, detail="image not found")
+        return FileResponse(image_path, media_type="image/jpeg")
 
     @app.post("/today/items")
     async def add_today_item(request: Request):

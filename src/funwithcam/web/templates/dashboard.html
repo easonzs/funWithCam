@@ -327,6 +327,19 @@
       </label>
       <button class="button button-primary span-2" type="submit">保存默认设置</button>
     </form>
+    <div class="calibration-entry">
+      <div>
+        <strong>孩子动作与光线基准</strong>
+        {% if calibration_version %}
+          <p>当前使用版本 {{ calibration_version.id }}，保存于 {{ calibration_version.created_at[:16].replace('T', ' ') }}。</p>
+        {% else %}
+          <p>尚未录入。完成后，姿势和光线检测会以孩子自己的正常状态为依据。</p>
+        {% endif %}
+      </div>
+      <a class="button" href="/calibration">
+        {% if calibration_version %}查看或重新录入{% else %}开始录入{% endif %}
+      </a>
+    </div>
   </section>
 </main>
 {% if workflow_value == 'PRECHECK' %}

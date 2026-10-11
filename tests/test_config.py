@@ -28,6 +28,11 @@ precheck:
   timeout_seconds: 15
   min_valid_frame_ratio: 0.8
   min_brightness: 45
+calibration:
+  duration_seconds: 10
+  timeout_seconds: 25
+  min_valid_samples: 12
+  image_dir: data/calibrations
 audio:
   command: ["say", "{text}"]
   camera_test_text: "测试成功"
@@ -77,6 +82,9 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((0.2, 0.15, 0.8, 0.95), config.study_area.rect)
         self.assertEqual(5, config.precheck.duration_seconds)
         self.assertEqual(45, config.precheck.min_brightness)
+        self.assertEqual(10, config.calibration.duration_seconds)
+        self.assertEqual(12, config.calibration.min_valid_samples)
+        self.assertEqual("calibrations", config.calibration.image_dir.name)
         self.assertEqual(3, config.identity.confirmation_frames)
         self.assertEqual("yunet.onnx", config.identity.detector_model.name)
         self.assertTrue(config.identity.save_debug_frames)
@@ -116,6 +124,23 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(15, config.precheck.timeout_seconds)
         self.assertEqual(0.8, config.precheck.min_valid_frame_ratio)
         self.assertEqual(45, config.precheck.min_brightness)
+
+    def test_uses_calibration_defaults_for_existing_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            start = VALID_CONFIG.index("calibration:")
+            end = VALID_CONFIG.index("audio:")
+            path.write_text(
+                VALID_CONFIG[:start] + VALID_CONFIG[end:],
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+        self.assertEqual(10, config.calibration.duration_seconds)
+        self.assertEqual(25, config.calibration.timeout_seconds)
+        self.assertEqual(12, config.calibration.min_valid_samples)
+        self.assertEqual("calibrations", config.calibration.image_dir.name)
 
 
 if __name__ == "__main__":

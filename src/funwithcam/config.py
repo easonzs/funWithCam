@@ -40,6 +40,14 @@ class PrecheckConfig:
 
 
 @dataclass(frozen=True)
+class CalibrationConfig:
+    duration_seconds: float
+    timeout_seconds: float
+    min_valid_samples: int
+    image_dir: Path
+
+
+@dataclass(frozen=True)
 class AudioConfig:
     command: Tuple[str, ...]
     camera_test_text: str
@@ -90,6 +98,7 @@ class AppConfig:
     person: PersonConfig
     presence: PresenceConfig
     precheck: PrecheckConfig
+    calibration: CalibrationConfig
     audio: AudioConfig
     speech: SpeechConfig
     identity: IdentityConfig
@@ -180,6 +189,18 @@ def load_config(path: Path) -> AppConfig:
         ),
         "precheck",
     )
+    calibration = _as_mapping(
+        raw.get(
+            "calibration",
+            {
+                "duration_seconds": 10,
+                "timeout_seconds": 25,
+                "min_valid_samples": 12,
+                "image_dir": "data/calibrations",
+            },
+        ),
+        "calibration",
+    )
     audio = _as_mapping(_require(raw, "audio"), "audio")
     speech = _as_mapping(_require(raw, "speech"), "speech")
     identity = _as_mapping(_require(raw, "identity"), "identity")
@@ -217,6 +238,16 @@ def load_config(path: Path) -> AppConfig:
     )
     if precheck_timeout <= precheck_duration:
         raise ValueError("precheck timeout must be longer than duration")
+    calibration_duration = _positive(
+        _require(calibration, "duration_seconds"),
+        "calibration.duration_seconds",
+    )
+    calibration_timeout = _positive(
+        _require(calibration, "timeout_seconds"),
+        "calibration.timeout_seconds",
+    )
+    if calibration_timeout <= calibration_duration:
+        raise ValueError("calibration timeout must be longer than duration")
 
     return AppConfig(
         timezone=str(_require(raw, "timezone")),
@@ -272,6 +303,18 @@ def load_config(path: Path) -> AppConfig:
             min_brightness=_brightness(
                 _require(precheck, "min_brightness"),
                 "precheck.min_brightness",
+            ),
+        ),
+        calibration=CalibrationConfig(
+            duration_seconds=calibration_duration,
+            timeout_seconds=calibration_timeout,
+            min_valid_samples=_positive_int(
+                _require(calibration, "min_valid_samples"),
+                "calibration.min_valid_samples",
+            ),
+            image_dir=_project_path(
+                project_root,
+                _require(calibration, "image_dir"),
             ),
         ),
         audio=AudioConfig(

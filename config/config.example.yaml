@@ -30,6 +30,14 @@ precheck:
   # 0～255，取书桌区域的平均亮度。
   min_brightness: 45
 
+calibration:
+  # 家长在 Web 中分四步录入孩子自己的正常动作和合适光线。
+  duration_seconds: 10
+  timeout_seconds: 25
+  min_valid_samples: 12
+  # 原图和标注图只保存在本机 data 目录，不会提交到 Git。
+  image_dir: data/calibrations
+
 audio:
   command: ["say", "{text}"]
   camera_test_text: "摄像头人物检测和语音播放测试成功。"
