@@ -2,14 +2,20 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from funwithcam.calibration import (
+    CameraCalibrationRunner,
     representative_sample_index,
     summarize_features,
 )
 from funwithcam.calibration_steps import CALIBRATION_STEP_KEYS
+from funwithcam.config import load_config
 from funwithcam.storage.calibration_repository import CalibrationRepository
 from funwithcam.storage.database import Database
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _capture_payload(step: str, offset: float = 0.0) -> dict:
@@ -52,6 +58,33 @@ class CalibrationMathTest(unittest.TestCase):
         self.assertAlmostEqual(0.12, summary["shoulder_width"]["p10"])
         self.assertAlmostEqual(0.28, summary["shoulder_width"]["p90"])
         self.assertEqual(1, representative)
+
+
+class CalibrationRunnerTest(unittest.TestCase):
+    def test_caches_face_templates_before_capture_thread_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            Database(database_path).initialize()
+            config = load_config(
+                PROJECT_ROOT / "config" / "config.example.yaml"
+            )
+            stop_event = MagicMock()
+            stop_event.is_set.return_value = True
+            with (
+                patch("funwithcam.calibration.FaceProfileRepository") as profiles,
+                patch("funwithcam.calibration.FaceDetector"),
+                patch("funwithcam.calibration.FaceRecognizer"),
+                patch("funwithcam.calibration._PoseFeatureExtractor"),
+                patch("funwithcam.calibration.LatestFrameCapture") as capture_class,
+                patch("funwithcam.calibration._speak_safely"),
+            ):
+                capture_class.return_value = MagicMock()
+                profiles.return_value.list_active.return_value = []
+                runner = CameraCalibrationRunner(config, database_path)
+                result = runner("draft", "sitting", stop_event)
+
+        self.assertEqual("cancelled", result.reason)
+        profiles.return_value.list_active.assert_called_once_with("formal")
 
 
 class CalibrationRepositoryTest(unittest.TestCase):

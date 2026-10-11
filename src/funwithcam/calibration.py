@@ -132,7 +132,9 @@ def representative_sample_index(
 class CameraCalibrationRunner:
     def __init__(self, config: AppConfig, database_path: Path):
         self._config = config
-        self._database_path = database_path
+        self._templates = FaceProfileRepository(
+            Database(database_path)
+        ).list_active("formal")
 
     def __call__(
         self,
@@ -159,11 +161,8 @@ class CameraCalibrationRunner:
             config.identity.min_face_size_px,
         )
         recognizer = FaceRecognizer(config.identity.recognizer_model)
-        templates = FaceProfileRepository(
-            Database(self._database_path)
-        ).list_active("formal")
         matcher = IdentityMatcher(
-            templates,
+            self._templates,
             config.identity.match_threshold,
             config.identity.ambiguity_margin,
         )
