@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -28,6 +29,42 @@ class VideoTest(unittest.TestCase):
             self.assertIsNone(capture.get_latest(5))
         with patch("funwithcam.video.time.monotonic", return_value=102):
             self.assertEqual("frame", capture.get_latest(5).frame)
+
+    def test_close_waits_for_reader_before_releasing_capture(self):
+        read_started = threading.Event()
+        allow_read_to_finish = threading.Event()
+        release_called = threading.Event()
+
+        class FakeCapture:
+            def isOpened(self):
+                return True
+
+            def read(self):
+                read_started.set()
+                allow_read_to_finish.wait(2)
+                return False, None
+
+            def release(self):
+                release_called.set()
+
+        capture = LatestFrameCapture("rtsp://camera", 0.01, 0)
+        capture._cv2 = type(
+            "FakeCv2",
+            (),
+            {"VideoCapture": lambda _self, _url: FakeCapture()},
+        )()
+        capture.start()
+        self.assertTrue(read_started.wait(1))
+
+        close_thread = threading.Thread(target=capture.close)
+        close_thread.start()
+        time.sleep(0.05)
+        self.assertFalse(release_called.is_set())
+
+        allow_read_to_finish.set()
+        close_thread.join(1)
+        self.assertFalse(close_thread.is_alive())
+        self.assertTrue(release_called.is_set())
 
 
 if __name__ == "__main__":

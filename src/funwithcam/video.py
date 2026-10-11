@@ -66,29 +66,33 @@ class LatestFrameCapture:
 
     def close(self) -> None:
         self._stop.set()
-        self._release_current()
-        if self._thread is not None:
-            self._thread.join(timeout=self._reconnect_seconds + 1)
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=self._reconnect_seconds + 1)
+        if thread is None or not thread.is_alive():
             self._thread = None
 
     def _run(self) -> None:
-        while not self._stop.is_set():
-            if self._capture is None or not self._capture.isOpened():
-                if not self._open():
+        try:
+            while not self._stop.is_set():
+                if self._capture is None or not self._capture.isOpened():
+                    if not self._open():
+                        continue
+
+                ok, frame = self._capture.read()
+                if not ok:
+                    LOGGER.warning("video stream read failed; reconnecting")
+                    self._release_current()
+                    self._stop.wait(self._reconnect_seconds)
                     continue
 
-            ok, frame = self._capture.read()
-            if not ok:
-                LOGGER.warning("video stream read failed; reconnecting")
-                self._release_current()
-                self._stop.wait(self._reconnect_seconds)
-                continue
-
-            with self._lock:
-                self._latest = LatestFrame(
-                    frame=frame,
-                    captured_monotonic_at=time.monotonic(),
-                )
+                with self._lock:
+                    self._latest = LatestFrame(
+                        frame=frame,
+                        captured_monotonic_at=time.monotonic(),
+                    )
+        finally:
+            self._release_current()
 
     def _open(self) -> bool:
         LOGGER.info(
