@@ -1,7 +1,7 @@
 import logging
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlencode
@@ -29,6 +29,7 @@ from funwithcam.precheck import (
     PrecheckResult,
 )
 from funwithcam.speech import SPEECH_COMMAND_GUIDE, run_speech_service
+from funwithcam.storage.activity_repository import ActivityRepository
 from funwithcam.storage.auth_repository import AuthRepository, csrf_matches
 from funwithcam.storage.calibration_repository import CalibrationRepository
 from funwithcam.storage.database import Database
@@ -68,6 +69,32 @@ WORKFLOW_GUIDANCE = {
     "COMPLETED": "今天的学习记录已经结束，可以再次开始新的记录。",
     "DISABLED": "今天不会继续播放提醒。",
 }
+ACTIVITY_CATEGORIES = (
+    ("all", "全部"),
+    ("reminder", "提醒"),
+    ("recognition", "识别"),
+    ("speech", "语音"),
+    ("study", "学习"),
+    ("anomaly", "异常"),
+)
+ACTIVITY_CATEGORY_LABELS = dict(ACTIVITY_CATEGORIES)
+ACTIVITY_STATUS_LABELS = {
+    "success": "已完成",
+    "failed": "未通过",
+    "ignored": "已忽略",
+    "cancelled": "已取消",
+    "expired": "已过期",
+    "info": "进行中",
+}
+ACTIVITY_SOURCE_LABELS = {
+    "assistant": "系统",
+    "camera": "摄像头",
+    "microphone": "麦克风",
+    "scheduler": "定时任务",
+    "speech": "语音口令",
+    "web": "后台页面",
+    "system": "系统",
+}
 
 
 class _LoginRequired(Exception):
@@ -95,6 +122,7 @@ def create_app(
     timezone = ZoneInfo(config.timezone)
     database = Database(database_path)
     database.initialize()
+    activities = ActivityRepository(database)
     auth = AuthRepository(database)
     family = FamilyRepository(database)
     reminders = ReminderRepository(database)
@@ -103,6 +131,7 @@ def create_app(
     calibrations.recover_interrupted(datetime.now(timezone))
     prechecks = PrecheckCoordinator(
         study_sessions,
+        activities,
         timezone,
         precheck_runner or CameraPrecheckRunner(config, database_path),
     )
@@ -366,6 +395,53 @@ def create_app(
             records=records,
         )
 
+    @app.get("/history", response_class=HTMLResponse)
+    def history_page(
+        request: Request,
+        selected_date: Optional[str] = None,
+        category: str = "all",
+    ):
+        _, session = _require_session(request, auth, timezone)
+        today = datetime.now(timezone).date()
+        try:
+            history_date = (
+                today
+                if selected_date is None
+                else date.fromisoformat(selected_date)
+            )
+        except ValueError:
+            history_date = today
+        if category not in ACTIVITY_CATEGORY_LABELS:
+            category = "all"
+        events = activities.list_for_date(
+            history_date.isoformat(),
+            None if category == "all" else category,
+        )
+        for event in events:
+            event["category_label"] = ACTIVITY_CATEGORY_LABELS.get(
+                event["category"],
+                event["category"],
+            )
+            event["status_label"] = ACTIVITY_STATUS_LABELS.get(
+                event["status"],
+                event["status"],
+            )
+            event["source_label"] = ACTIVITY_SOURCE_LABELS.get(
+                event["source"],
+                event["source"],
+            )
+            event["details"] = _activity_details(event["payload"])
+        return render_page(
+            request,
+            "history.html",
+            session,
+            "records",
+            selected_date=history_date,
+            selected_category=category,
+            categories=ACTIVITY_CATEGORIES,
+            events=events,
+        )
+
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(
         request: Request,
@@ -593,13 +669,23 @@ def create_app(
         token, _ = _require_session(request, auth, timezone)
         form = await request.form()
         _require_csrf(token, str(form.get("csrf", "")))
+        now = datetime.now(timezone)
         try:
             reminders.reset_day(
-                datetime.now(timezone).date().isoformat(),
-                datetime.now(timezone),
+                now.date().isoformat(),
+                now,
             )
         except ValueError as exc:
             return _redirect("/settings", error=str(exc))
+        activities.record(
+            now,
+            "reminder",
+            "first_briefing_reset",
+            "web",
+            "success",
+            "首次提醒状态已重置",
+            "系统会重新等待孩子出现并播放今日安排。",
+        )
         return _redirect("/settings", message="今日首次提醒已重置")
 
     @app.post("/study/{action}")
@@ -614,13 +700,13 @@ def create_app(
                 prechecks.request("start", today, "web", now)
                 message = "正在进行开始前检查，请在书桌前保持 5 秒"
             elif action == "pause":
-                study_sessions.pause(today, now)
+                study_sessions.pause(today, now, source="web")
                 message = "学习记录已暂停"
             elif action == "resume":
                 prechecks.request("resume", today, "web", now)
                 message = "正在进行开始前检查，请在书桌前保持 5 秒"
             elif action == "finish":
-                study_sessions.finish(today, now)
+                study_sessions.finish(today, now, source="web")
                 message = "学习记录已结束"
             else:
                 raise ValueError("不支持的学习操作")
@@ -795,6 +881,61 @@ def _int_or_zero(value) -> int:
     if number < 0:
         raise ValueError("分钟数不能小于 0")
     return number
+
+
+def _activity_details(payload: dict) -> list[dict]:
+    labels = {
+        "action": "检查动作",
+        "reason": "结果原因",
+        "command": "关联口令",
+        "matching_frames": "确认帧数",
+        "scheduled_at": "计划时间",
+        "valid_frame_ratio": "有效画面",
+        "average_brightness": "平均亮度",
+        "person_ratio": "人物稳定度",
+        "single_face_ratio": "单人画面",
+        "child_ratio": "孩子身份",
+    }
+    values = {
+        "start": "开始学习",
+        "resume": "继续学习",
+        "confirmed": "身份确认通过",
+        "passed": "检查通过",
+        "video_unavailable": "视频不可用",
+        "too_dark": "光线偏暗",
+        "outside_study_area": "不在书桌区域",
+        "person_not_detected": "未稳定检测到人物",
+        "multiple_people": "检测到多人",
+        "face_not_visible": "人脸不可见",
+        "child_not_verified": "未确认孩子身份",
+        "cancelled": "检查已取消",
+        "system_error": "系统错误",
+    }
+    ratio_keys = {
+        "valid_frame_ratio",
+        "person_ratio",
+        "single_face_ratio",
+        "child_ratio",
+    }
+    details = []
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if key in ratio_keys:
+            display_value = "{:.0f}%".format(float(value) * 100)
+        elif key == "average_brightness":
+            display_value = "{:.1f}".format(float(value))
+        elif key == "scheduled_at":
+            display_value = str(value).replace("T", " ")[:16]
+        else:
+            display_value = values.get(str(value), str(value))
+        details.append(
+            {
+                "label": labels.get(key, key),
+                "value": display_value,
+            }
+        )
+    return details
 
 
 def _run_assistant_thread(

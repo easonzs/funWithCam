@@ -1,5 +1,11 @@
+import tempfile
 import unittest
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
+from funwithcam.config import load_config
 from funwithcam.speech import (
     FINISH,
     PAUSE,
@@ -7,11 +13,22 @@ from funwithcam.speech import (
     QUERY_HOMEWORK,
     RESUME,
     SPEECH_COMMAND_GUIDE,
+    SpeechCommandHandler,
     START,
     _course_message,
     _homework_message,
     parse_speech_command,
 )
+from funwithcam.storage.activity_repository import ActivityRepository
+from funwithcam.storage.database import Database
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+class RejectingPrechecks:
+    def request(self, *args, **kwargs):
+        raise ValueError("not available")
 
 
 class SpeechTest(unittest.TestCase):
@@ -65,6 +82,36 @@ class SpeechTest(unittest.TestCase):
             "小明，今天的课程有18点30分 围棋课、19点 英语课。",
             _course_message("小明", items, courses),
         )
+
+    def test_records_speech_input_output_and_ignored_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            config = load_config(
+                PROJECT_ROOT / "config" / "config.example.yaml"
+            )
+            with patch("funwithcam.speech.AudioOutput") as audio_output:
+                handler = SpeechCommandHandler(
+                    config,
+                    database_path,
+                    RejectingPrechecks(),
+                )
+                self.assertTrue(handler.handle("开始学习"))
+                self.assertFalse(handler.handle("帮我打开窗户"))
+
+            database = Database(database_path)
+            event_date = datetime.now(
+                ZoneInfo(config.timezone)
+            ).date().isoformat()
+            events = ActivityRepository(database).list_for_date(event_date)
+
+        self.assertEqual(3, len(events))
+        self.assertEqual(
+            {"speech_input", "speech_output"},
+            {event["event_type"] for event in events},
+        )
+        self.assertIn("ignored", {event["status"] for event in events})
+        self.assertIn("failed", {event["status"] for event in events})
+        audio_output.return_value.speak.assert_called_once()
 
 
 if __name__ == "__main__":

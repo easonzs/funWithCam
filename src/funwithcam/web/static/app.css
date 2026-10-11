@@ -926,6 +926,204 @@ textarea::placeholder {
   font-weight: 700;
 }
 
+.history-tools {
+  display: grid;
+  gap: 10px;
+  max-width: 900px;
+  margin-bottom: 30px;
+  padding: 18px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.history-tools > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.history-filter {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(150px, 0.7fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.history-section {
+  max-width: 900px;
+}
+
+.activity-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-row {
+  display: grid;
+  grid-template-columns: 72px 18px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 110px;
+}
+
+.activity-row > time {
+  padding-top: 17px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-marker {
+  position: relative;
+}
+
+.activity-marker::before {
+  position: absolute;
+  top: 22px;
+  left: 5px;
+  z-index: 1;
+  width: 8px;
+  height: 8px;
+  background: var(--primary);
+  border: 3px solid var(--bg);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--primary);
+  content: "";
+}
+
+.activity-marker::after {
+  position: absolute;
+  top: 36px;
+  bottom: -2px;
+  left: 10px;
+  width: 1px;
+  background: var(--line);
+  content: "";
+}
+
+.activity-row:last-child .activity-marker::after {
+  display: none;
+}
+
+.activity-content {
+  min-width: 0;
+  padding: 14px 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.activity-heading > div {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 9px;
+}
+
+.activity-heading h3 {
+  margin: 0;
+}
+
+.activity-category,
+.activity-result {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 26px;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.activity-category {
+  color: var(--primary-hover);
+  background: var(--primary-soft);
+}
+
+.activity-category-speech {
+  color: var(--accent);
+  background: oklch(0.94 0.035 250);
+}
+
+.activity-category-study {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.activity-category-anomaly {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.activity-result {
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.activity-summary {
+  max-width: 68ch;
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-meta {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.activity-details {
+  margin-top: 10px;
+}
+
+.activity-details summary {
+  width: fit-content;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.activity-details dl {
+  display: grid;
+  max-width: 560px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 24px;
+  margin: 9px 0 0;
+}
+
+.activity-details dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-details dt {
+  color: var(--muted);
+}
+
+.activity-details dd {
+  margin: 0;
+  font-weight: 650;
+  text-align: right;
+}
+
+.activity-status-ignored {
+  opacity: 0.64;
+}
+
+.activity-status-failed .activity-marker::before {
+  background: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
+
 .login-shell {
   display: grid;
   min-height: 100vh;
@@ -1591,6 +1789,36 @@ code {
 
   .form-actions .button {
     width: 100%;
+  }
+
+  .history-filter {
+    grid-template-columns: 1fr;
+  }
+
+  .history-filter .button {
+    width: 100%;
+  }
+
+  .activity-row {
+    grid-template-columns: 54px 14px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .activity-heading {
+    display: grid;
+    gap: 8px;
+  }
+
+  .activity-heading > div {
+    align-items: flex-start;
+  }
+
+  .activity-result {
+    width: fit-content;
+  }
+
+  .activity-details dl {
+    grid-template-columns: 1fr;
   }
 
   .settings-form {

@@ -5,12 +5,14 @@ from funwithcam.domain.events import EventType
 from funwithcam.domain.state_machine import WorkflowSnapshot, transition
 from funwithcam.domain.states import WorkflowState
 
+from .activity_repository import ActivityRepository
 from .database import Database
 
 
 class StudySessionRepository:
     def __init__(self, database: Database):
         self._database = database
+        self._activities = ActivityRepository(database)
 
     def get_latest(self, session_date: str) -> Optional[dict]:
         with self._database.connection() as connection:
@@ -195,15 +197,28 @@ class StudySessionRepository:
             )
         return session_id
 
-    def pause(self, session_date: str, now: datetime) -> None:
+    def pause(
+        self,
+        session_date: str,
+        now: datetime,
+        source: str = "system",
+    ) -> None:
         self._change_state(
             session_date,
             now,
             EventType.PAUSE_REQUESTED,
             "PAUSED",
+            source,
+            "study_paused",
+            "学习记录已暂停",
         )
 
-    def finish(self, session_date: str, now: datetime) -> None:
+    def finish(
+        self,
+        session_date: str,
+        now: datetime,
+        source: str = "system",
+    ) -> None:
         timestamp = now.isoformat()
         with self._database.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -229,6 +244,14 @@ class StudySessionRepository:
             )
             self._save_snapshot(connection, session_date, snapshot, timestamp)
             connection.commit()
+        self._activities.record(
+            now,
+            "study",
+            "study_finished",
+            source,
+            "success",
+            "学习记录已结束",
+        )
 
     def _change_state(
         self,
@@ -236,6 +259,9 @@ class StudySessionRepository:
         now: datetime,
         event_type: EventType,
         interval_type: str,
+        source: str,
+        activity_type: str,
+        activity_title: str,
     ) -> None:
         timestamp = now.isoformat()
         with self._database.connection() as connection:
@@ -256,6 +282,14 @@ class StudySessionRepository:
             )
             self._save_snapshot(connection, session_date, snapshot, timestamp)
             connection.commit()
+        self._activities.record(
+            now,
+            "study",
+            activity_type,
+            source,
+            "success",
+            activity_title,
+        )
 
     def _load_snapshot(self, connection, session_date: str) -> WorkflowSnapshot:
         row = connection.execute(

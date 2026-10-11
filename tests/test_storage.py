@@ -38,6 +38,7 @@ class DatabaseTest(unittest.TestCase):
                     "calibration_versions",
                     "calibration_drafts",
                     "face_profiles",
+                    "activity_events",
                 }.issubset(tables)
             )
 
@@ -69,7 +70,7 @@ class DatabaseTest(unittest.TestCase):
                 count = connection.execute(
                     "SELECT COUNT(*) FROM schema_migrations"
                 ).fetchone()[0]
-        self.assertEqual(5, count)
+        self.assertEqual(6, count)
 
 
 if __name__ == "__main__":

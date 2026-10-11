@@ -1,0 +1,85 @@
+{% extends "app_shell.html" %}
+{% block title %}执行历史 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>执行历史</h1>
+    <p class="page-description">按时间回溯系统当天识别、提醒、语音和学习状态的变化。</p>
+  </div>
+</header>
+
+<nav class="tab-list" aria-label="记录类型">
+  <a href="/records">学习记录</a>
+  <a href="/history" aria-current="page">执行历史</a>
+</nav>
+
+<section class="history-tools" aria-label="筛选执行历史">
+  <form class="history-filter" method="get" action="/history">
+    <label>
+      日期
+      <input type="date" name="selected_date" value="{{ selected_date.isoformat() }}">
+    </label>
+    <label>
+      类型
+      <select name="category">
+        {% for value, label in categories %}
+          <option value="{{ value }}" {% if selected_category == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="button button-primary" type="submit">查看记录</button>
+  </form>
+  <p>仅记录此功能上线后产生的新事件，过去的服务日志不会自动补录。</p>
+</section>
+
+<section class="content-section history-section" aria-labelledby="history-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="history-title">{{ selected_date.strftime("%Y年%m月%d日") }}</h2>
+      <p>共 {{ events|length }} 条记录，最新发生的事件排在前面。</p>
+    </div>
+  </div>
+
+  {% if events %}
+    <ol class="activity-list">
+      {% for event in events %}
+        <li class="activity-row activity-status-{{ event.status }}">
+          <time datetime="{{ event.occurred_at }}">{{ event.occurred_at[11:19] }}</time>
+          <div class="activity-marker" aria-hidden="true"></div>
+          <div class="activity-content">
+            <div class="activity-heading">
+              <div>
+                <span class="activity-category activity-category-{{ event.category }}">{{ event.category_label }}</span>
+                <h3>{{ event.title }}</h3>
+              </div>
+              <span class="activity-result">{{ event.status_label }}</span>
+            </div>
+            {% if event.summary %}
+              <p class="activity-summary">{{ event.summary }}</p>
+            {% endif %}
+            <p class="activity-meta">来源：{{ event.source_label }}</p>
+            {% if event.details %}
+              <details class="activity-details">
+                <summary>查看详情</summary>
+                <dl>
+                  {% for detail in event.details %}
+                    <div>
+                      <dt>{{ detail.label }}</dt>
+                      <dd>{{ detail.value }}</dd>
+                    </div>
+                  {% endfor %}
+                </dl>
+              </details>
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <div class="empty-state">
+      <strong>这一天还没有执行记录</strong>
+      <p>选择其他日期，或等待系统产生新的识别、提醒、语音和学习事件。</p>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from .audio import AudioOutput
 from .config import AppConfig, SpeechConfig, load_config
 from .precheck import PrecheckCoordinator, PrecheckResult
+from .storage.activity_repository import ActivityRepository
 from .storage.database import Database
 from .storage.family_repository import FamilyRepository
 from .storage.study_session_repository import StudySessionRepository
@@ -96,6 +97,7 @@ class SpeechCommandHandler:
         database = Database(database_path)
         database.initialize()
         self._timezone = ZoneInfo(config.timezone)
+        self._activities = ActivityRepository(database)
         self._family = FamilyRepository(database)
         self._sessions = StudySessionRepository(database)
         self._audio = AudioOutput(config.audio.command)
@@ -103,10 +105,29 @@ class SpeechCommandHandler:
 
     def handle(self, text: str) -> bool:
         command = parse_speech_command(text)
+        now = datetime.now(self._timezone)
         if command is None:
+            self._activities.record(
+                now,
+                "speech",
+                "speech_input",
+                "microphone",
+                "ignored",
+                "语音未匹配到口令",
+                text,
+            )
             return False
 
-        now = datetime.now(self._timezone)
+        self._activities.record(
+            now,
+            "speech",
+            "speech_input",
+            "microphone",
+            "success",
+            "识别到语音口令",
+            text,
+            {"command": command},
+        )
         session_date = now.date().isoformat()
         child_name = self._family.get_settings()["child_name"]
         try:
@@ -122,7 +143,7 @@ class SpeechCommandHandler:
                     child_name
                 )
             elif command == PAUSE:
-                self._sessions.pause(session_date, now)
+                self._sessions.pause(session_date, now, source="speech")
                 message = "{}，好的，先休息一下。".format(child_name)
             elif command == RESUME:
                 self._prechecks.request(
@@ -136,7 +157,7 @@ class SpeechCommandHandler:
                     child_name
                 )
             elif command == FINISH:
-                self._sessions.finish(session_date, now)
+                self._sessions.finish(session_date, now, source="speech")
                 message = "{}，本次学习记录已经结束。".format(child_name)
             elif command == QUERY_HOMEWORK:
                 message = _homework_message(
@@ -151,10 +172,14 @@ class SpeechCommandHandler:
                 )
         except ValueError:
             LOGGER.info("speech command rejected in current workflow: %s", command)
-            self._audio.speak("{}，现在还不能执行这个操作。".format(child_name))
+            self._speak_and_record(
+                "{}，现在还不能执行这个操作。".format(child_name),
+                command,
+                "failed",
+            )
             return True
 
-        self._audio.speak(message)
+        self._speak_and_record(message, command, "success")
         return True
 
     def _announce_precheck(self, result: PrecheckResult) -> None:
@@ -163,7 +188,29 @@ class SpeechCommandHandler:
             message = "{}，检查通过，开始记录学习。".format(child_name)
         else:
             message = "{}，{}。".format(child_name, result.message)
+        self._speak_and_record(
+            message,
+            "precheck_result",
+            "success" if result.passed else "failed",
+        )
+
+    def _speak_and_record(
+        self,
+        message: str,
+        command: str,
+        status: str,
+    ) -> None:
         self._audio.speak(message)
+        self._activities.record(
+            datetime.now(self._timezone),
+            "speech",
+            "speech_output",
+            "assistant",
+            status,
+            "系统语音回复",
+            message,
+            {"command": command},
+        )
 
 
 class SherpaSpeechListener:

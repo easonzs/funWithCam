@@ -16,6 +16,7 @@ from .reminders import (
     build_reminder_plan,
     build_second_reminder_message,
 )
+from .storage.activity_repository import ActivityRepository
 from .storage.database import Database
 from .storage.family_repository import FamilyRepository
 from .storage.reminder_repository import ReminderRepository
@@ -54,6 +55,7 @@ def run_assistant(
     timezone = ZoneInfo(config.timezone)
     database = Database(database_path)
     database.initialize()
+    activities = ActivityRepository(database)
     family = FamilyRepository(database)
     reminders = ReminderRepository(database)
     validate_formal_identities(database_path)
@@ -103,7 +105,14 @@ def run_assistant(
 
             if now_monotonic - last_schedule_check >= 1.0:
                 last_schedule_check = now_monotonic
-                _process_second_reminder(now, family, reminders, audio, timezone)
+                _process_second_reminder(
+                    now,
+                    family,
+                    reminders,
+                    activities,
+                    audio,
+                    timezone,
+                )
 
             status = reminders.get_daily_status(now.date().isoformat())
             briefing_is_complete = status["briefed_at"] is not None
@@ -177,6 +186,19 @@ def run_assistant(
             if identity.identity != "child":
                 continue
 
+            activities.record(
+                now,
+                "recognition",
+                "child_confirmed",
+                "camera",
+                "success",
+                "首次识别到孩子",
+                "已确认书桌区域内是孩子，准备播放今日安排。",
+                {
+                    "matching_frames": identity.matching_frames,
+                    "reason": identity.reason,
+                },
+            )
             items = family.list_agenda(now.date())
             courses = family.list_courses_for_date(now.date())
             message = build_briefing_message(
@@ -193,6 +215,15 @@ def run_assistant(
                 datetime.now(timezone),
                 message,
             )
+            activities.record(
+                datetime.now(timezone),
+                "reminder",
+                "first_briefing",
+                "assistant",
+                "success",
+                "首次提醒已播放",
+                message,
+            )
             LOGGER.info("first briefing completed")
     except KeyboardInterrupt:
         LOGGER.info("assistant service stopped")
@@ -205,6 +236,7 @@ def _process_second_reminder(
     now: datetime,
     family: FamilyRepository,
     reminders: ReminderRepository,
+    activities: ActivityRepository,
     audio: AudioOutput,
     timezone: ZoneInfo,
 ) -> None:
@@ -237,6 +269,16 @@ def _process_second_reminder(
             "expired",
             None,
         )
+        activities.record(
+            now,
+            "reminder",
+            "second_reminder",
+            "scheduler",
+            "expired",
+            "第二次提醒已过期",
+            "超过可播放时间，本次提醒没有播报。",
+            {"scheduled_at": plan.second_reminder_at.isoformat()},
+        )
         return
 
     message = build_second_reminder_message(
@@ -251,6 +293,16 @@ def _process_second_reminder(
         datetime.now(timezone),
         "played",
         message,
+    )
+    activities.record(
+        datetime.now(timezone),
+        "reminder",
+        "second_reminder",
+        "scheduler",
+        "success",
+        "第二次提醒已播放",
+        message,
+        {"scheduled_at": plan.second_reminder_at.isoformat()},
     )
     LOGGER.info("second reminder completed")
 

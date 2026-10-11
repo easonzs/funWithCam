@@ -12,6 +12,7 @@ from .identity.matcher import IdentityMatcher
 from .identity.repository import FaceProfileRepository
 from .identity.vision import FaceDetector, FaceRecognizer
 from .presence import PresenceMonitor
+from .storage.activity_repository import ActivityRepository
 from .storage.database import Database
 from .storage.study_session_repository import StudySessionRepository
 from .video import LatestFrameCapture
@@ -243,10 +244,12 @@ class PrecheckCoordinator:
     def __init__(
         self,
         sessions: StudySessionRepository,
+        activities: ActivityRepository,
         timezone: ZoneInfo,
         runner: Callable[[threading.Event], PrecheckResult],
     ):
         self._sessions = sessions
+        self._activities = activities
         self._timezone = timezone
         self._runner = runner
         self._lock = threading.Lock()
@@ -272,11 +275,21 @@ class PrecheckCoordinator:
                 self._sessions.request_resume(session_date, now)
             else:
                 raise ValueError("不支持的开始前检查操作")
+            self._activities.record(
+                now,
+                "study",
+                "precheck_started",
+                source,
+                "info",
+                "开始学习前检查" if action == "start" else "继续学习前检查",
+                "正在检查摄像头、书桌区域、孩子身份和光线。",
+                {"action": action},
+            )
             self._last_date = session_date
             self._last_result = None
             self._thread = threading.Thread(
                 target=self._run,
-                args=(session_date, source, on_complete),
+                args=(action, session_date, source, on_complete),
                 name="study-precheck",
                 daemon=True,
             )
@@ -296,6 +309,7 @@ class PrecheckCoordinator:
 
     def _run(
         self,
+        action: str,
         session_date: str,
         source: str,
         on_complete: Optional[Callable[[PrecheckResult], None]],
@@ -346,6 +360,30 @@ class PrecheckCoordinator:
                 result.single_face_ratio,
                 result.child_ratio,
             )
+        self._activities.record(
+            now,
+            "study" if result.passed else "anomaly",
+            "precheck_passed" if result.passed else "precheck_failed",
+            source,
+            "success" if result.passed else "failed",
+            (
+                "学习记录已开始"
+                if result.passed and action == "start"
+                else "学习记录已继续"
+                if result.passed
+                else "开始前检查未通过"
+            ),
+            result.message,
+            {
+                "action": action,
+                "reason": result.reason,
+                "valid_frame_ratio": result.valid_frame_ratio,
+                "average_brightness": result.average_brightness,
+                "person_ratio": result.person_ratio,
+                "single_face_ratio": result.single_face_ratio,
+                "child_ratio": result.child_ratio,
+            },
+        )
         with self._lock:
             self._last_result = result
         if on_complete is not None:

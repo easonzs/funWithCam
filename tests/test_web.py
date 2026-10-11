@@ -14,6 +14,7 @@ from funwithcam.calibration_steps import CALIBRATION_STEP_KEYS
 from funwithcam.domain.state_machine import WorkflowSnapshot
 from funwithcam.domain.states import WorkflowState
 from funwithcam.precheck import PrecheckResult
+from funwithcam.storage.activity_repository import ActivityRepository
 from funwithcam.storage.auth_repository import AuthRepository
 from funwithcam.storage.calibration_repository import CalibrationRepository
 from funwithcam.storage.database import Database
@@ -195,6 +196,7 @@ class WebAppTest(unittest.TestCase):
                     "/",
                     "/schedule",
                     "/records",
+                    "/history",
                     "/settings",
                     "/schedule/new",
                     "/courses/new",
@@ -236,6 +238,16 @@ class WebAppTest(unittest.TestCase):
                     'href="/records" aria-current="page"',
                     records.text,
                 )
+                self.assertIn("执行历史", records.text)
+
+                history = client.get("/history")
+                self.assertIn(
+                    'href="/records" aria-current="page"',
+                    history.text,
+                )
+                self.assertIn("执行历史", history.text)
+                self.assertIn('name="selected_date"', history.text)
+                self.assertIn('name="category"', history.text)
 
                 settings = client.get("/settings")
                 self.assertIn(
@@ -283,6 +295,65 @@ class WebAppTest(unittest.TestCase):
                         "/schedule?tab=courses&message="
                     )
                 )
+
+    def test_history_page_filters_and_displays_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            database = Database(database_path)
+            database.initialize()
+            occurred_at = datetime(
+                2026,
+                10,
+                11,
+                18,
+                5,
+                tzinfo=ZoneInfo("Asia/Shanghai"),
+            )
+            AuthRepository(database).set_password(
+                "parent",
+                "long-password",
+                occurred_at,
+            )
+            activities = ActivityRepository(database)
+            activities.record(
+                occurred_at,
+                "speech",
+                "speech_input",
+                "microphone",
+                "info",
+                "识别到语音口令",
+                "开始学习",
+                {"command": "start"},
+            )
+            activities.record(
+                occurred_at,
+                "reminder",
+                "first_briefing",
+                "assistant",
+                "success",
+                "首次提醒已播放",
+            )
+            app = create_app(
+                PROJECT_ROOT / "config" / "config.example.yaml",
+                database_path,
+                precheck_runner=_passed_precheck,
+            )
+
+            with TestClient(app) as client:
+                client.post(
+                    "/login",
+                    data={"username": "parent", "password": "long-password"},
+                )
+                response = client.get(
+                    "/history?selected_date=2026-10-11&category=speech"
+                )
+
+        self.assertEqual(200, response.status_code)
+        self.assertIn("18:05:00", response.text)
+        self.assertIn("识别到语音口令", response.text)
+        self.assertIn("开始学习", response.text)
+        self.assertIn("关联口令", response.text)
+        self.assertNotIn("首次提醒已播放", response.text)
 
     def test_rejects_post_without_csrf(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -482,12 +553,16 @@ class WebAppTest(unittest.TestCase):
             status = ReminderRepository(database).get_daily_status(
                 now.date().isoformat()
             )
+            activity = ActivityRepository(database).list_for_date(
+                now.date().isoformat()
+            )
 
         self.assertEqual(303, reset.status_code)
         self.assertEqual(
             "WAITING_FOR_FIRST_APPEARANCE",
             status["workflow_state"],
         )
+        self.assertEqual("first_briefing_reset", activity[0]["event_type"])
 
     def test_calibration_wizard_requires_login_and_publishes_version(self):
         with tempfile.TemporaryDirectory() as directory:

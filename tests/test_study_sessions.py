@@ -5,6 +5,7 @@ from pathlib import Path
 
 from funwithcam.domain.state_machine import WorkflowSnapshot
 from funwithcam.domain.states import WorkflowState
+from funwithcam.storage.activity_repository import ActivityRepository
 from funwithcam.storage.calibration_repository import CalibrationRepository
 from funwithcam.storage.database import Database
 from funwithcam.storage.study_session_repository import StudySessionRepository
@@ -52,6 +53,9 @@ class StudySessionRepositoryTest(unittest.TestCase):
 
             latest = sessions.get_latest("2026-10-12")
             snapshot = workflow.load("2026-10-12")
+            activities = ActivityRepository(database).list_for_date(
+                "2026-10-12"
+            )
             with database.connection() as connection:
                 intervals = connection.execute(
                     """
@@ -81,6 +85,10 @@ class StudySessionRepositoryTest(unittest.TestCase):
         self.assertTrue(all(row["ended_at"] for row in intervals))
         self.assertEqual("cancelled", cancellation["status"])
         self.assertEqual("study_started", cancellation["cancellation_reason"])
+        self.assertEqual(
+            {"study_paused", "study_finished"},
+            {event["event_type"] for event in activities},
+        )
 
     def test_completed_day_can_start_another_session(self):
         with tempfile.TemporaryDirectory() as directory:
