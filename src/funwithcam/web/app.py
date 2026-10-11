@@ -28,7 +28,7 @@ from funwithcam.precheck import (
     PrecheckCoordinator,
     PrecheckResult,
 )
-from funwithcam.speech import run_speech_service
+from funwithcam.speech import SPEECH_COMMAND_GUIDE, run_speech_service
 from funwithcam.storage.auth_repository import AuthRepository, csrf_matches
 from funwithcam.storage.calibration_repository import CalibrationRepository
 from funwithcam.storage.database import Database
@@ -382,6 +382,7 @@ def create_app(
             settings=family.get_settings(),
             calibration_version=calibrations.get_latest_version(),
             speech_enabled=config.speech.enabled,
+            speech_commands=SPEECH_COMMAND_GUIDE,
             camera_configured=bool(config.video.stream_url.strip()),
             today=today,
             message=message,

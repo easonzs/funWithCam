@@ -24,6 +24,55 @@ FINISH = "finish"
 QUERY_HOMEWORK = "query_homework"
 QUERY_COURSES = "query_courses"
 
+SPEECH_COMMAND_GUIDE = (
+    {
+        "command": START,
+        "label": "开始学习",
+        "phrases": ("开始写作业", "开始学习", "开始记录"),
+        "description": "完成开始前检查并建立学习记录；今日简报完成后可用。",
+    },
+    {
+        "command": PAUSE,
+        "label": "暂停学习",
+        "phrases": ("我要休息", "休息一下", "暂停学习", "休息"),
+        "description": "暂停当前学习记录；仅在正在学习时可用。",
+    },
+    {
+        "command": RESUME,
+        "label": "继续学习",
+        "phrases": ("继续学习", "继续写作业", "继续记录", "继续"),
+        "description": "重新检查书桌状态后继续记录；仅在暂停或中断时可用。",
+    },
+    {
+        "command": FINISH,
+        "label": "结束学习",
+        "phrases": (
+            "结束学习",
+            "结束记录",
+            "作业写完了",
+            "我写完了",
+            "写完了",
+        ),
+        "description": "结束当前学习记录；仅在学习、离座或暂停状态可用。",
+    },
+    {
+        "command": QUERY_HOMEWORK,
+        "label": "查询今日作业",
+        "phrases": (
+            "今天有什么作业",
+            "今天作业是什么",
+            "今天的作业是什么",
+        ),
+        "description": "播报日程中尚未完成的学校作业。",
+    },
+    {
+        "command": QUERY_COURSES,
+        "label": "查询今日课程",
+        "phrases": ("今天有什么课", "今天的课是什么", "今天几点上课"),
+        "description": "播报今天录入的课程和每周固定课程。",
+    },
+)
+
 
 def parse_speech_command(text: str) -> Optional[str]:
     normalized = "".join(
@@ -31,26 +80,9 @@ def parse_speech_command(text: str) -> Optional[str]:
         for character in text.lower()
         if character not in " ，。！？,.!?、\t\r\n"
     )
-    phrases = (
-        (
-            FINISH,
-            ("结束学习", "结束记录", "作业写完了", "我写完了", "写完了"),
-        ),
-        (PAUSE, ("我要休息", "休息一下", "暂停学习", "休息")),
-        (RESUME, ("继续学习", "继续写作业", "继续记录", "继续")),
-        (START, ("开始写作业", "开始学习", "开始记录")),
-        (
-            QUERY_HOMEWORK,
-            ("今天有什么作业", "今天作业是什么", "今天的作业是什么"),
-        ),
-        (
-            QUERY_COURSES,
-            ("今天有什么课", "今天的课是什么", "今天几点上课"),
-        ),
-    )
-    for command, candidates in phrases:
-        if any(candidate in normalized for candidate in candidates):
-            return command
+    for item in SPEECH_COMMAND_GUIDE:
+        if any(candidate in normalized for candidate in item["phrases"]):
+            return item["command"]
     return None
 
 

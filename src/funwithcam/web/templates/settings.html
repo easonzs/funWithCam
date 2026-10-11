@@ -74,6 +74,40 @@
     </dl>
   </section>
 
+  <section class="settings-section" aria-labelledby="speech-command-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="speech-command-title">可用语音口令</h2>
+        <p>
+          {% if speech_enabled %}
+            直接对 MacBook 说出下面任一短语。识别会忽略空格和常见标点。
+          {% else %}
+            当前语音口令未开启；开启并重启服务后，可使用下面这些短语。
+          {% endif %}
+        </p>
+      </div>
+      <span class="status-chip {% if speech_enabled %}is-ready{% else %}is-unavailable{% endif %}">
+        {% if speech_enabled %}正在监听{% else %}未开启{% endif %}
+      </span>
+    </div>
+    <div class="speech-command-list">
+      {% for item in speech_commands %}
+        <article class="speech-command-row" data-speech-command="{{ item.command }}">
+          <div class="speech-command-name">
+            <h3>{{ item.label }}</h3>
+            <p>{{ item.description }}</p>
+          </div>
+          <div class="speech-phrases" aria-label="{{ item.label }}可说的短语">
+            {% for phrase in item.phrases %}
+              <span>“{{ phrase }}”</span>
+            {% endfor %}
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+    <p class="section-footnote">本机使用半双工识别：系统语音播报期间会暂时停止收音，播报结束后自动继续。</p>
+  </section>
+
   <section class="settings-section calibration-setting" aria-labelledby="calibration-setting-title">
     <div>
       <h2 id="calibration-setting-title">动作与光线基准</h2>

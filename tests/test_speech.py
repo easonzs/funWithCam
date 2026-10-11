@@ -6,6 +6,7 @@ from funwithcam.speech import (
     QUERY_COURSES,
     QUERY_HOMEWORK,
     RESUME,
+    SPEECH_COMMAND_GUIDE,
     START,
     _course_message,
     _homework_message,
@@ -29,6 +30,15 @@ class SpeechTest(unittest.TestCase):
                 self.assertEqual(expected, parse_speech_command(text))
 
         self.assertIsNone(parse_speech_command("帮我打开窗户"))
+
+    def test_every_documented_phrase_is_recognized(self):
+        for item in SPEECH_COMMAND_GUIDE:
+            for phrase in item["phrases"]:
+                with self.subTest(command=item["command"], phrase=phrase):
+                    self.assertEqual(
+                        item["command"],
+                        parse_speech_command(phrase),
+                    )
 
     def test_builds_homework_and_course_answers(self):
         items = [

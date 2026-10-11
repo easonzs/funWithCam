@@ -243,6 +243,13 @@ class WebAppTest(unittest.TestCase):
                     settings.text,
                 )
                 self.assertIn('name="child_name"', settings.text)
+                self.assertIn("可用语音口令", settings.text)
+                self.assertIn(
+                    'data-speech-command="start"',
+                    settings.text,
+                )
+                self.assertIn("开始写作业", settings.text)
+                self.assertIn("今天几点上课", settings.text)
 
                 agenda_form = client.get("/schedule/new")
                 self.assertIn('action="/today/items"', agenda_form.text)

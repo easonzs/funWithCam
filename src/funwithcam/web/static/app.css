@@ -789,6 +789,58 @@ textarea::placeholder {
   color: var(--muted);
 }
 
+.status-chip {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 5px 10px;
+  background: var(--surface);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.speech-command-list {
+  border-top: 1px solid var(--line);
+}
+
+.speech-command-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+  gap: 24px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.speech-command-name h3 {
+  margin: 0;
+}
+
+.speech-command-name p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.speech-phrases {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 7px;
+}
+
+.speech-phrases span {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  padding: 5px 9px;
+  color: var(--ink);
+  background: var(--surface);
+  border-radius: 999px;
+  font-size: 0.84rem;
+}
+
 .calibration-setting {
   display: flex;
   align-items: center;
@@ -1563,6 +1615,15 @@ code {
 
   .detail-list dd {
     text-align: left;
+  }
+
+  .speech-command-row {
+    grid-template-columns: 1fr;
+    gap: 11px;
+  }
+
+  .section-heading .status-chip {
+    align-self: flex-start;
   }
 
   .login-panel {
