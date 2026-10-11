@@ -109,6 +109,51 @@ class ReminderRepository:
             )
             connection.commit()
 
+    def reset_day(self, session_date: str, recorded_at: datetime) -> None:
+        timestamp = recorded_at.isoformat()
+        with self._database.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            session = connection.execute(
+                """
+                SELECT id
+                FROM study_sessions
+                WHERE session_date = ?
+                LIMIT 1
+                """,
+                (session_date,),
+            ).fetchone()
+            if session is not None:
+                raise ValueError("今天已有学习记录，不能重置首次提醒")
+            connection.execute(
+                """
+                INSERT INTO daily_status (
+                    session_date,
+                    workflow_state,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(session_date) DO UPDATE SET
+                    workflow_state = excluded.workflow_state,
+                    return_state = NULL,
+                    first_seen_at = NULL,
+                    briefed_at = NULL,
+                    second_reminder_at = NULL,
+                    disabled_at = NULL,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    session_date,
+                    WorkflowState.WAITING_FOR_FIRST_APPEARANCE.value,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM reminders WHERE session_date = ?",
+                (session_date,),
+            )
+            connection.commit()
+
     def _insert_reminder(
         self,
         connection,

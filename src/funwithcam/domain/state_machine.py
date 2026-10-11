@@ -87,7 +87,8 @@ def transition(
     event_type: EventType,
 ) -> WorkflowSnapshot:
     if (
-        snapshot.state == WorkflowState.WAITING_TO_START
+        snapshot.state
+        in (WorkflowState.WAITING_TO_START, WorkflowState.COMPLETED)
         and event_type == EventType.START_REQUESTED
     ):
         return WorkflowSnapshot(

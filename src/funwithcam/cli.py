@@ -10,6 +10,7 @@ from .assistant_service import run_assistant, validate_formal_identities
 from .camera_test import run_camera_test
 from .config import load_config
 from .identity.commands import run_face_enrollment, run_face_verification
+from .speech import run_speech_test
 from .storage.auth_repository import AuthRepository
 from .storage.database import Database
 from .web import create_app
@@ -40,6 +41,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="detect stable presence and play one test message",
     )
     camera_test.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config/config.yaml"),
+        help="configuration file path",
+    )
+
+    speech_test = subparsers.add_parser(
+        "speech-test",
+        help="print local microphone recognition results without changing state",
+    )
+    speech_test.add_argument(
         "--config",
         type=Path,
         default=Path("config/config.yaml"),
@@ -122,6 +134,8 @@ def main() -> None:
         AudioOutput(config.audio.command).speak(config.audio.camera_test_text)
     elif args.command == "camera-test":
         run_camera_test(args.config)
+    elif args.command == "speech-test":
+        run_speech_test(args.config)
     elif args.command == "face-enroll":
         profile_id = run_face_enrollment(
             args.config,

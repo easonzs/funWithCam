@@ -14,9 +14,12 @@ from fastapi.templating import Jinja2Templates
 
 from funwithcam.assistant_service import run_assistant
 from funwithcam.config import load_config
+from funwithcam.speech import run_speech_service
 from funwithcam.storage.auth_repository import AuthRepository, csrf_matches
 from funwithcam.storage.database import Database
 from funwithcam.storage.family_repository import FamilyRepository
+from funwithcam.storage.reminder_repository import ReminderRepository
+from funwithcam.storage.study_session_repository import StudySessionRepository
 from funwithcam.storage.workflow_repository import WorkflowRepository
 
 
@@ -56,6 +59,8 @@ def create_app(
     database.initialize()
     auth = AuthRepository(database)
     family = FamilyRepository(database)
+    reminders = ReminderRepository(database)
+    study_sessions = StudySessionRepository(database)
     workflow = WorkflowRepository(database)
     web_root = Path(__file__).resolve().parent
     templates = Jinja2Templates(directory=str(web_root / "templates"))
@@ -64,6 +69,7 @@ def create_app(
     async def lifespan(app: FastAPI):
         stop_event = None
         assistant_thread = None
+        speech_thread = None
         if assistant_enabled:
             stop_event = threading.Event()
             assistant_thread = threading.Thread(
@@ -73,6 +79,14 @@ def create_app(
                 daemon=True,
             )
             assistant_thread.start()
+            if config.speech.enabled:
+                speech_thread = threading.Thread(
+                    target=_run_speech_thread,
+                    args=(config_path, database_path, stop_event),
+                    name="speech-service",
+                    daemon=True,
+                )
+                speech_thread.start()
         try:
             yield
         finally:
@@ -80,6 +94,8 @@ def create_app(
                 stop_event.set()
             if assistant_thread is not None:
                 assistant_thread.join(timeout=5)
+            if speech_thread is not None:
+                speech_thread.join(timeout=5)
 
     app = FastAPI(
         title="FunWithCam",
@@ -171,6 +187,8 @@ def create_app(
                 "preferences": family.get_daily_preferences(today),
                 "settings": family.get_settings(),
                 "workflow_state": WORKFLOW_LABELS[workflow_value],
+                "workflow_value": workflow_value,
+                "study_session": study_sessions.get_latest(today.isoformat()),
                 "message": message,
                 "error": error,
             },
@@ -238,6 +256,46 @@ def create_app(
         except ValueError as exc:
             return _redirect("/", error=str(exc))
         return _redirect("/", message="今日提醒设置已保存")
+
+    @app.post("/today/reset-first-briefing")
+    async def reset_first_briefing(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            reminders.reset_day(
+                datetime.now(timezone).date().isoformat(),
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/", error=str(exc))
+        return _redirect("/", message="今日首次提醒已重置")
+
+    @app.post("/study/{action}")
+    async def change_study_state(action: str, request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        today = datetime.now(timezone).date().isoformat()
+        now = datetime.now(timezone)
+        try:
+            if action == "start":
+                study_sessions.start(today, "web", now)
+                message = "学习记录已开始"
+            elif action == "pause":
+                study_sessions.pause(today, now)
+                message = "学习记录已暂停"
+            elif action == "resume":
+                study_sessions.resume(today, now)
+                message = "学习记录已继续"
+            elif action == "finish":
+                study_sessions.finish(today, now)
+                message = "学习记录已结束"
+            else:
+                raise ValueError("不支持的学习操作")
+        except ValueError as exc:
+            return _redirect("/", error=str(exc))
+        return _redirect("/", message=message)
 
     @app.post("/courses")
     async def add_course(request: Request):
@@ -366,3 +424,14 @@ def _run_assistant_thread(
         run_assistant(config_path, database_path, stop_event)
     except Exception:
         LOGGER.exception("assistant service stopped unexpectedly")
+
+
+def _run_speech_thread(
+    config_path: Path,
+    database_path: Path,
+    stop_event: threading.Event,
+) -> None:
+    try:
+        run_speech_service(config_path, database_path, stop_event)
+    except Exception:
+        LOGGER.exception("speech service stopped unexpectedly")

@@ -6,6 +6,7 @@ video:
   inference_fps: 4
   reconnect_seconds: 3
   max_frame_age_seconds: 2
+  warmup_seconds: 1.5
 
 study_area:
   # x_min, y_min, x_max, y_max，均为归一化坐标。
@@ -25,10 +26,18 @@ audio:
   command: ["say", "{text}"]
   camera_test_text: "摄像头人物检测和语音播放测试成功。"
 
+speech:
+  enabled: false
+  model_path: models/vosk-model-small-cn-0.22
+  sample_rate: 16000
+  block_size: 8000
+  device:
+  command_cooldown_seconds: 2
+
 identity:
   detector_model: models/face_detection_yunet_2023mar.onnx
   recognizer_model: models/face_recognition_sface_2021dec.onnx
-  detection_threshold: 0.90
+  detection_threshold: 0.85
   nms_threshold: 0.30
   min_face_size_px: 80
   match_threshold: 0.45

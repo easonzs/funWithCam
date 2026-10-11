@@ -79,6 +79,7 @@ def run_assistant(
     capture = LatestFrameCapture(
         config.video.stream_url,
         config.video.reconnect_seconds,
+        config.video.warmup_seconds,
     )
     audio = AudioOutput(config.audio.command)
     interval = 1.0 / config.video.inference_fps
@@ -86,6 +87,7 @@ def run_assistant(
     last_schedule_check = 0.0
     identity_suppressed_until = 0.0
     active_date = None
+    briefing_was_complete = False
 
     LOGGER.info("starting FunWithCam assistant service")
     capture.start()
@@ -104,6 +106,12 @@ def run_assistant(
                 _process_second_reminder(now, family, reminders, audio, timezone)
 
             status = reminders.get_daily_status(now.date().isoformat())
+            briefing_is_complete = status["briefed_at"] is not None
+            if briefing_was_complete and not briefing_is_complete:
+                presence.reset()
+                verifier = _new_verifier(config)
+                identity_suppressed_until = 0.0
+            briefing_was_complete = briefing_is_complete
             if status["briefed_at"] is not None or status["disabled_at"] is not None:
                 stop_event.wait(0.1)
                 continue
@@ -201,7 +209,11 @@ def _process_second_reminder(
     timezone: ZoneInfo,
 ) -> None:
     status = reminders.get_daily_status(now.date().isoformat())
-    if status["briefed_at"] is None or status["second_reminder_at"] is not None:
+    if (
+        status["briefed_at"] is None
+        or status["second_reminder_at"] is not None
+        or status["workflow_state"] != "WAITING_TO_START"
+    ):
         return
     settings = family.get_settings()
     plan = build_reminder_plan(

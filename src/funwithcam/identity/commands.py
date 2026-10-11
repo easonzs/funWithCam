@@ -285,6 +285,7 @@ def _build_runtime(config: AppConfig):
     capture = LatestFrameCapture(
         config.video.stream_url,
         config.video.reconnect_seconds,
+        config.video.warmup_seconds,
     )
     return detector, recognizer, capture
 

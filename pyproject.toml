@@ -18,6 +18,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+speech = [
+  "sounddevice>=0.4.6,<1",
+  "vosk>=0.3.45,<0.4",
+]
 test = [
   "httpx>=0.27,<1",
 ]

@@ -392,6 +392,40 @@ h3 {
   border-radius: var(--radius);
 }
 
+.study-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px;
+  background: var(--primary-soft);
+  border-radius: var(--radius);
+}
+
+.study-control p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.reset-reminder {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.reset-reminder small {
+  color: var(--muted);
+}
+
 .editor summary {
   min-height: 48px;
   padding: 12px 16px;
@@ -553,6 +587,21 @@ code {
   .inline-course {
     display: grid;
     gap: 2px;
+  }
+
+  .study-control,
+  .reset-reminder {
+    display: grid;
+    align-items: stretch;
+  }
+
+  .workflow-actions {
+    justify-content: stretch;
+  }
+
+  .workflow-actions form,
+  .workflow-actions .button {
+    width: 100%;
   }
 
   .inline-course small {

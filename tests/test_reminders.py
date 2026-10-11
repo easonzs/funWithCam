@@ -147,6 +147,59 @@ class ReminderRepositoryTest(unittest.TestCase):
         self.assertEqual(second.isoformat(), status["second_reminder_at"])
         self.assertEqual(2, count)
 
+    def test_reset_day_clears_briefing_and_reminders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+            repository = ReminderRepository(database)
+            now = datetime(2026, 10, 12, 17, 5, tzinfo=TIMEZONE)
+            repository.mark_briefed(
+                "2026-10-12",
+                now,
+                now,
+                "今日简报",
+            )
+
+            repository.reset_day("2026-10-12", now)
+
+            status = repository.get_daily_status("2026-10-12")
+            with database.connection() as connection:
+                count = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM reminders
+                    WHERE session_date = '2026-10-12'
+                    """
+                ).fetchone()[0]
+
+        self.assertIsNone(status["briefed_at"])
+        self.assertEqual("WAITING_FOR_FIRST_APPEARANCE", status["workflow_state"])
+        self.assertEqual(0, count)
+
+    def test_reset_day_rejects_existing_study_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+            now = datetime(2026, 10, 12, 17, 5, tzinfo=TIMEZONE)
+            with database.connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO study_sessions (
+                        session_date,
+                        state,
+                        started_at,
+                        start_source,
+                        created_at,
+                        updated_at
+                    ) VALUES ('2026-10-12', 'COMPLETED', ?, 'web', ?, ?)
+                    """,
+                    (now.isoformat(), now.isoformat(), now.isoformat()),
+                )
+                connection.commit()
+
+            with self.assertRaises(ValueError):
+                ReminderRepository(database).reset_day("2026-10-12", now)
+
 
 if __name__ == "__main__":
     unittest.main()

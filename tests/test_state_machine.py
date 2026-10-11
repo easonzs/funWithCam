@@ -56,6 +56,13 @@ class WorkflowStateMachineTest(unittest.TestCase):
         with self.assertRaises(InvalidTransition):
             transition(snapshot, EventType.FINISH_CONFIRMED)
 
+    def test_completed_day_can_start_again(self):
+        snapshot = WorkflowSnapshot(WorkflowState.COMPLETED)
+        precheck = transition(snapshot, EventType.START_REQUESTED)
+        studying = transition(precheck, EventType.PRECHECK_PASSED)
+
+        self.assertEqual(WorkflowState.STUDYING, studying.state)
+
 
 if __name__ == "__main__":
     unittest.main()

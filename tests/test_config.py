@@ -12,6 +12,7 @@ video:
   inference_fps: 4
   reconnect_seconds: 3
   max_frame_age_seconds: 2
+  warmup_seconds: 1.5
 study_area:
   rect: [0.2, 0.15, 0.8, 0.95]
 person:
@@ -25,6 +26,13 @@ presence:
 audio:
   command: ["say", "{text}"]
   camera_test_text: "测试成功"
+speech:
+  enabled: false
+  model_path: models/vosk-cn
+  sample_rate: 16000
+  block_size: 8000
+  device:
+  command_cooldown_seconds: 2
 identity:
   detector_model: models/yunet.onnx
   recognizer_model: models/sface.onnx
@@ -60,11 +68,14 @@ class ConfigTest(unittest.TestCase):
             config = load_config(path)
 
         self.assertEqual(4, config.video.inference_fps)
+        self.assertEqual(1.5, config.video.warmup_seconds)
         self.assertEqual((0.2, 0.15, 0.8, 0.95), config.study_area.rect)
         self.assertEqual(3, config.identity.confirmation_frames)
         self.assertEqual("yunet.onnx", config.identity.detector_model.name)
         self.assertTrue(config.identity.save_debug_frames)
         self.assertEqual("face_debug", config.identity.debug_dir.name)
+        self.assertFalse(config.speech.enabled)
+        self.assertEqual("vosk-cn", config.speech.model_path.name)
         self.assertEqual(8000, config.web.port)
         self.assertEqual("DEBUG", config.log_level)
 

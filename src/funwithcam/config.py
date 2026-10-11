@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Tuple
+from typing import Mapping, Optional, Tuple, Union
 
 
 @dataclass(frozen=True)
@@ -9,6 +9,7 @@ class VideoConfig:
     inference_fps: float
     reconnect_seconds: float
     max_frame_age_seconds: float
+    warmup_seconds: float
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,16 @@ class PresenceConfig:
 class AudioConfig:
     command: Tuple[str, ...]
     camera_test_text: str
+
+
+@dataclass(frozen=True)
+class SpeechConfig:
+    enabled: bool
+    model_path: Path
+    sample_rate: int
+    block_size: int
+    device: Optional[Union[int, str]]
+    command_cooldown_seconds: float
 
 
 @dataclass(frozen=True)
@@ -71,6 +82,7 @@ class AppConfig:
     person: PersonConfig
     presence: PresenceConfig
     audio: AudioConfig
+    speech: SpeechConfig
     identity: IdentityConfig
     web: WebConfig
     log_level: str
@@ -92,6 +104,13 @@ def _positive(value: object, key: str) -> float:
     number = float(value)
     if number <= 0:
         raise ValueError("{} must be positive".format(key))
+    return number
+
+
+def _non_negative(value: object, key: str) -> float:
+    number = float(value)
+    if number < 0:
+        raise ValueError("{} must be zero or positive".format(key))
     return number
 
 
@@ -141,6 +160,7 @@ def load_config(path: Path) -> AppConfig:
     person = _as_mapping(_require(raw, "person"), "person")
     presence = _as_mapping(_require(raw, "presence"), "presence")
     audio = _as_mapping(_require(raw, "audio"), "audio")
+    speech = _as_mapping(_require(raw, "speech"), "speech")
     identity = _as_mapping(_require(raw, "identity"), "identity")
     web = _as_mapping(_require(raw, "web"), "web")
     logging_config = _as_mapping(raw.get("logging", {}), "logging")
@@ -182,6 +202,10 @@ def load_config(path: Path) -> AppConfig:
                 _require(video, "max_frame_age_seconds"),
                 "video.max_frame_age_seconds",
             ),
+            warmup_seconds=_non_negative(
+                _require(video, "warmup_seconds"),
+                "video.warmup_seconds",
+            ),
         ),
         study_area=StudyAreaConfig(rect=_rect(_require(study_area, "rect"))),
         person=PersonConfig(
@@ -209,6 +233,26 @@ def load_config(path: Path) -> AppConfig:
         audio=AudioConfig(
             command=tuple(command),
             camera_test_text=str(_require(audio, "camera_test_text")),
+        ),
+        speech=SpeechConfig(
+            enabled=_boolean(_require(speech, "enabled"), "speech.enabled"),
+            model_path=_project_path(
+                project_root,
+                _require(speech, "model_path"),
+            ),
+            sample_rate=_positive_int(
+                _require(speech, "sample_rate"),
+                "speech.sample_rate",
+            ),
+            block_size=_positive_int(
+                _require(speech, "block_size"),
+                "speech.block_size",
+            ),
+            device=_speech_device(speech.get("device")),
+            command_cooldown_seconds=_positive(
+                _require(speech, "command_cooldown_seconds"),
+                "speech.command_cooldown_seconds",
+            ),
         ),
         identity=IdentityConfig(
             detector_model=_project_path(
@@ -293,4 +337,12 @@ def _project_path(project_root: Path, value: object) -> Path:
     if path.is_absolute():
         return path
     return (project_root / path).resolve()
+
+
+def _speech_device(value: object) -> Optional[Union[int, str]]:
+    if value is None:
+        return None
+    if isinstance(value, (int, str)):
+        return value
+    raise ValueError("speech.device must be null, an integer, or a string")
 

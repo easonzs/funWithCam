@@ -138,6 +138,45 @@
         <p>孩子听完首次简报后可以先吃饭，不要求立即回应。</p>
       </div>
     </div>
+    <div class="study-control">
+      <div>
+        <strong>学习记录</strong>
+        {% if study_session %}
+          <p>
+            开始于 {{ study_session.started_at[11:16] }}
+            {% if study_session.finished_at %}，结束于 {{ study_session.finished_at[11:16] }}{% endif %}
+          </p>
+        {% else %}
+          <p>今天还没有学习记录。</p>
+        {% endif %}
+      </div>
+      <div class="workflow-actions">
+        {% if workflow_value in ['WAITING_TO_START', 'COMPLETED'] %}
+          <form method="post" action="/study/start">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="button button-primary" type="submit">开始学习</button>
+          </form>
+        {% elif workflow_value == 'STUDYING' %}
+          <form method="post" action="/study/pause">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="button" type="submit">休息一下</button>
+          </form>
+          <form method="post" action="/study/finish" onsubmit="return confirm('确认结束本次学习？')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="button button-danger" type="submit">结束学习</button>
+          </form>
+        {% elif workflow_value in ['PAUSED', 'INTERRUPTED'] %}
+          <form method="post" action="/study/resume">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="button button-primary" type="submit">继续学习</button>
+          </form>
+          <form method="post" action="/study/finish" onsubmit="return confirm('确认结束本次学习？')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="button button-danger" type="submit">结束学习</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
     <form method="post" action="/today/preferences" class="form-grid form-surface">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label>
@@ -171,6 +210,16 @@
         </label>
       </div>
       <button class="button button-primary span-2" type="submit">保存今天的设置</button>
+    </form>
+    <form
+      method="post"
+      action="/today/reset-first-briefing"
+      class="reset-reminder"
+      onsubmit="return confirm('确认清除今天的首次提醒记录并重新测试？')"
+    >
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button button-danger" type="submit">重置今日首次提醒</button>
+      <small>仅用于测试；学习记录进行中时不能重置。</small>
     </form>
   </section>
 

@@ -16,7 +16,12 @@ class LatestFrame:
 
 
 class LatestFrameCapture:
-    def __init__(self, stream_url: str, reconnect_seconds: float):
+    def __init__(
+        self,
+        stream_url: str,
+        reconnect_seconds: float,
+        warmup_seconds: float,
+    ):
         try:
             import cv2
         except ImportError as exc:
@@ -25,8 +30,10 @@ class LatestFrameCapture:
         self._cv2 = cv2
         self._stream_url = stream_url
         self._reconnect_seconds = reconnect_seconds
+        self._warmup_seconds = warmup_seconds
         self._lock = threading.Lock()
         self._latest: Optional[LatestFrame] = None
+        self._opened_monotonic_at: Optional[float] = None
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._capture = None
@@ -44,7 +51,14 @@ class LatestFrameCapture:
     def get_latest(self, max_age_seconds: float) -> Optional[LatestFrame]:
         with self._lock:
             latest = self._latest
+            opened_monotonic_at = self._opened_monotonic_at
         if latest is None:
+            return None
+        if (
+            opened_monotonic_at is None
+            or time.monotonic() - opened_monotonic_at
+            < self._warmup_seconds
+        ):
             return None
         if time.monotonic() - latest.captured_monotonic_at > max_age_seconds:
             return None
@@ -87,12 +101,18 @@ class LatestFrameCapture:
             LOGGER.warning("unable to open video stream; retrying")
             self._stop.wait(self._reconnect_seconds)
             return False
+        with self._lock:
+            self._latest = None
+            self._opened_monotonic_at = time.monotonic()
         self._capture = capture
         return True
 
     def _release_current(self) -> None:
         capture = self._capture
         self._capture = None
+        with self._lock:
+            self._latest = None
+            self._opened_monotonic_at = None
         if capture is not None:
             capture.release()
 

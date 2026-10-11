@@ -25,6 +25,7 @@ def run_camera_test(config_path: Path) -> None:
     capture = LatestFrameCapture(
         config.video.stream_url,
         config.video.reconnect_seconds,
+        config.video.warmup_seconds,
     )
     detector = PosePresenceDetector(config.person.min_detection_confidence)
     monitor = PresenceMonitor(
