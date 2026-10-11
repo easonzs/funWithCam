@@ -17,6 +17,10 @@ from .identity.matcher import IdentityMatcher, MultiFrameVerifier
 from .identity.repository import FaceProfileRepository
 from .identity.vision import FaceDetector, FaceRecognizer
 from .precheck import calculate_brightness
+from .runtime_state import (
+    set_calibration_active,
+    wait_for_assistant_pause,
+)
 from .storage.calibration_repository import CalibrationRepository
 from .storage.database import Database
 from .video import LatestFrameCapture
@@ -346,6 +350,16 @@ class CalibrationCoordinator:
             if self._thread is not None and self._thread.is_alive():
                 raise ValueError("另一个基准步骤正在采集")
             self._repository.mark_capturing(draft_id, step, now)
+            set_calibration_active(True)
+            if not wait_for_assistant_pause(3.0):
+                set_calibration_active(False)
+                self._repository.fail_capture(
+                    draft_id,
+                    step,
+                    "日常视觉检测尚未暂停，请稍后重试",
+                    now,
+                )
+                raise ValueError("日常视觉检测尚未暂停，请稍后重试")
             self._thread = threading.Thread(
                 target=self._run,
                 args=(draft_id, step),
@@ -362,40 +376,43 @@ class CalibrationCoordinator:
 
     def _run(self, draft_id: str, step: str) -> None:
         try:
-            result = self._runner(draft_id, step, self._stop_event)
-        except Exception:
-            LOGGER.exception("calibration capture failed unexpectedly")
-            result = CalibrationCaptureResult(False, "system_error")
-        now = datetime.now(self._timezone)
-        try:
-            if result.passed:
-                self._repository.save_capture(
-                    draft_id,
-                    step,
-                    result.as_repository_payload(),
-                    now,
-                )
-            else:
-                self._repository.fail_capture(
-                    draft_id,
-                    step,
-                    result.message,
-                    now,
-                )
-        except Exception:
-            LOGGER.exception("unable to persist calibration result")
             try:
-                self._repository.fail_capture(
-                    draft_id,
-                    step,
-                    CalibrationCaptureResult(
-                        False,
-                        "system_error",
-                    ).message,
-                    now,
-                )
+                result = self._runner(draft_id, step, self._stop_event)
             except Exception:
-                LOGGER.exception("unable to persist calibration failure")
+                LOGGER.exception("calibration capture failed unexpectedly")
+                result = CalibrationCaptureResult(False, "system_error")
+            now = datetime.now(self._timezone)
+            try:
+                if result.passed:
+                    self._repository.save_capture(
+                        draft_id,
+                        step,
+                        result.as_repository_payload(),
+                        now,
+                    )
+                else:
+                    self._repository.fail_capture(
+                        draft_id,
+                        step,
+                        result.message,
+                        now,
+                    )
+            except Exception:
+                LOGGER.exception("unable to persist calibration result")
+                try:
+                    self._repository.fail_capture(
+                        draft_id,
+                        step,
+                        CalibrationCaptureResult(
+                            False,
+                            "system_error",
+                        ).message,
+                        now,
+                    )
+                except Exception:
+                    LOGGER.exception("unable to persist calibration failure")
+        finally:
+            set_calibration_active(False)
 
 
 class _PoseFeatureExtractor:

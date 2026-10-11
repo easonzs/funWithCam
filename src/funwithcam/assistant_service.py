@@ -11,6 +11,11 @@ from .identity.matcher import FrameMatch, IdentityMatcher, MultiFrameVerifier
 from .identity.repository import FaceProfileRepository
 from .identity.vision import FaceDetector, FaceRecognizer
 from .presence import PresenceMonitor
+from .runtime_state import (
+    calibration_active,
+    set_assistant_paused,
+    set_assistant_running,
+)
 from .reminders import (
     build_briefing_message,
     build_reminder_plan,
@@ -76,13 +81,9 @@ def run_assistant(
         config.identity.min_face_size_px,
     )
     recognizer = FaceRecognizer(config.identity.recognizer_model)
-    pose = PosePresenceDetector(config.person.min_detection_confidence)
+    pose = None
     presence = PresenceMonitor(config.study_area, config.person, config.presence)
-    capture = LatestFrameCapture(
-        config.video.stream_url,
-        config.video.reconnect_seconds,
-        config.video.warmup_seconds,
-    )
+    capture = None
     audio = AudioOutput(config.audio.command)
     interval = 1.0 / config.video.inference_fps
     last_inference_at = 0.0
@@ -92,9 +93,31 @@ def run_assistant(
     briefing_was_complete = False
 
     LOGGER.info("starting FunWithCam assistant service")
-    capture.start()
+    set_assistant_running(True)
     try:
         while not stop_event.is_set():
+            if calibration_active():
+                if capture is not None:
+                    capture.close()
+                    capture = None
+                if pose is not None:
+                    pose.close()
+                    pose = None
+                set_assistant_paused(True)
+                stop_event.wait(0.1)
+                continue
+            set_assistant_paused(False)
+            if capture is None:
+                capture = LatestFrameCapture(
+                    config.video.stream_url,
+                    config.video.reconnect_seconds,
+                    config.video.warmup_seconds,
+                )
+                capture.start()
+            if pose is None:
+                pose = PosePresenceDetector(
+                    config.person.min_detection_confidence
+                )
             now = datetime.now(timezone)
             now_monotonic = time.monotonic()
             if active_date != now.date():
@@ -228,8 +251,11 @@ def run_assistant(
     except KeyboardInterrupt:
         LOGGER.info("assistant service stopped")
     finally:
-        pose.close()
-        capture.close()
+        set_assistant_running(False)
+        if pose is not None:
+            pose.close()
+        if capture is not None:
+            capture.close()
 
 
 def _process_second_reminder(
