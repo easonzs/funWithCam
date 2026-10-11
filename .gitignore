@@ -1,0 +1,14 @@
+.venv/
+.python/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+data/
+logs/
+config/*.yaml
+!config/*.example.yaml
+*.db
+*.db-shm
+*.db-wal
+

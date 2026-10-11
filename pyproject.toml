@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "funwithcam-by-codex"
+version = "0.1.0"
+description = "Local-first family study assistant"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "jinja2>=3.1,<4",
+  "mediapipe==0.10.21",
+  "opencv-contrib-python>=4.8,<5",
+  "python-multipart>=0.0.9,<1",
+  "PyYAML>=6,<7",
+  "uvicorn>=0.30,<1",
+]
+
+[project.optional-dependencies]
+test = [
+  "httpx>=0.27,<1",
+]
+
+[project.scripts]
+funwithcam = "funwithcam.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"funwithcam.storage.migrations" = ["*.sql"]
+"funwithcam.web" = ["templates/*.html", "static/*.css"]
+

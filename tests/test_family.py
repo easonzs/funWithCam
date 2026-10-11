@@ -1,0 +1,97 @@
+import tempfile
+import unittest
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+from funwithcam.storage.auth_repository import AuthRepository
+from funwithcam.storage.database import Database
+from funwithcam.storage.family_repository import FamilyRepository
+
+
+class AuthRepositoryTest(unittest.TestCase):
+    def test_password_and_session_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+            repository = AuthRepository(database)
+            now = datetime(2026, 10, 11, tzinfo=timezone.utc)
+            repository.set_password("parent", "long-password", now)
+
+            self.assertIsNone(
+                repository.create_session("parent", "wrong-password", now, 24)
+            )
+            token = repository.create_session(
+                "parent",
+                "long-password",
+                now,
+                24,
+            )
+            session = repository.get_session(token, now)
+
+        self.assertIsNotNone(token)
+        self.assertEqual("parent", session.username)
+        self.assertTrue(session.csrf_token)
+
+
+class FamilyRepositoryTest(unittest.TestCase):
+    def test_agenda_course_and_preferences_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+            repository = FamilyRepository(database)
+            now = datetime(2026, 10, 11, 10, 0, tzinfo=timezone.utc)
+            today = date(2026, 10, 11)
+
+            item_id = repository.add_agenda(
+                today,
+                "homework",
+                "数学练习册",
+                "数学",
+                None,
+                30,
+                0,
+                "",
+                now,
+            )
+            repository.set_agenda_status(item_id, "done", now)
+            repository.add_weekly_course(
+                "英语课",
+                today.isoweekday(),
+                "19:00",
+                "offline",
+                10,
+                20,
+                now,
+            )
+            repository.save_daily_preferences(
+                today,
+                "rest_day",
+                "custom",
+                "10:30",
+                True,
+                False,
+                now,
+            )
+
+            items = repository.list_agenda(today)
+            courses = repository.list_courses_for_date(today)
+            preferences = repository.get_daily_preferences(today)
+
+        self.assertEqual("done", items[0]["status"])
+        self.assertEqual("英语课", courses[0]["name"])
+        self.assertEqual("10:30", preferences["second_reminder_time"])
+        self.assertEqual(0, preferences["posture_reminders_enabled"])
+
+    def test_default_settings_are_present(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+
+            settings = FamilyRepository(database).get_settings()
+
+        self.assertEqual("17:00", settings["first_briefing_weekday_time"])
+        self.assertEqual("18:10", settings["second_reminder_weekday_time"])
+
+
+if __name__ == "__main__":
+    unittest.main()

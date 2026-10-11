@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}家长登录 · FunWithCam{% endblock %}
+{% block body %}
+<main class="login-shell">
+  <section class="login-panel" aria-labelledby="login-title">
+    <div class="brand-mark" aria-hidden="true">F</div>
+    <h1 id="login-title">家长登录</h1>
+    <p class="lead">管理今天的作业、课程和提醒时间。所有数据保存在这台 MacBook。</p>
+    {% if error %}
+      <p class="notice notice-error" role="alert">{{ error }}</p>
+    {% endif %}
+    <form method="post" action="/login" class="form-stack">
+      <label>
+        <span>用户名</span>
+        <input name="username" autocomplete="username" required autofocus>
+      </label>
+      <label>
+        <span>密码</span>
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button class="button button-primary" type="submit">登录</button>
+    </form>
+    <p class="helper">首次使用请先在 MacBook 终端运行 <code>funwithcam create-admin</code>。</p>
+  </section>
+</main>
+{% endblock %}

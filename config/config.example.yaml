@@ -1,0 +1,54 @@
+timezone: Asia/Shanghai
+
+video:
+  # 应用只读取 go2rtc 的本地输出，不直接保存摄像头密码。
+  stream_url: rtsp://127.0.0.1:8554/study_room
+  inference_fps: 4
+  reconnect_seconds: 3
+  max_frame_age_seconds: 2
+
+study_area:
+  # x_min, y_min, x_max, y_max，均为归一化坐标。
+  rect: [0.20, 0.15, 0.80, 0.95]
+
+person:
+  min_detection_confidence: 0.60
+  min_bbox_area_ratio: 0.03
+  max_bbox_area_ratio: 0.65
+
+presence:
+  confirm_seconds: 5
+  allowed_missed_seconds: 1
+  max_center_jump: 0.20
+
+audio:
+  command: ["say", "{text}"]
+  camera_test_text: "摄像头人物检测和语音播放测试成功。"
+
+identity:
+  detector_model: models/face_detection_yunet_2023mar.onnx
+  recognizer_model: models/face_recognition_sface_2021dec.onnx
+  detection_threshold: 0.90
+  nms_threshold: 0.30
+  min_face_size_px: 80
+  match_threshold: 0.45
+  ambiguity_margin: 0.08
+  confirmation_frames: 3
+  confirmation_window_seconds: 3
+  enrollment_samples: 9
+  sample_interval_seconds: 0.7
+  command_timeout_seconds: 60
+  # 开启后会保存包含人脸的调试照片，仅建议排查识别问题时使用。
+  save_debug_frames: false
+  debug_dir: data/face_debug
+  debug_face_limit: 30
+  debug_rejected_limit: 10
+
+web:
+  host: 0.0.0.0
+  port: 8000
+  session_hours: 24
+
+logging:
+  level: INFO
+

@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}今日安排 · FunWithCam{% endblock %}
+{% block body %}
+<header class="topbar">
+  <div>
+    <a class="wordmark" href="/">FunWithCam</a>
+    <span class="privacy-label">家庭本地服务</span>
+  </div>
+  <form method="post" action="/logout">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="button button-quiet" type="submit">退出</button>
+  </form>
+</header>
+
+<main class="page-shell">
+  <section class="today-heading">
+    <div>
+      <p class="date-line">{{ today.strftime('%Y年%m月%d日') }} · {{ weekday }}</p>
+      <h1>今天的安排</h1>
+    </div>
+    <div class="workflow-state">
+      <span>提醒流程</span>
+      <strong>{{ workflow_state }}</strong>
+    </div>
+  </section>
+
+  {% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+  {% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+  <nav class="section-nav" aria-label="页面分区">
+    <a href="#today-list">今日安排</a>
+    <a href="#today-reminder">今日提醒</a>
+    <a href="#weekly-courses">固定课程</a>
+    <a href="#defaults">默认设置</a>
+  </nav>
+
+  <section class="section-block" id="today-list">
+    <div class="section-heading">
+      <div>
+        <h2>作业、课程与临时安排</h2>
+        <p>首次简报会从这里提取最重要的内容。</p>
+      </div>
+      <span class="count-badge">{{ today_count }} 项</span>
+    </div>
+
+    {% if items %}
+      <div class="item-list">
+        {% for item in items %}
+          <article class="agenda-row {% if item.status == 'done' %}is-done{% endif %}">
+            <div class="agenda-main">
+              <div class="agenda-meta">
+                <span class="type-tag type-{{ item.item_type }}">
+                  {% if item.item_type == 'homework' %}作业{% elif item.item_type == 'course' %}课程{% else %}临时{% endif %}
+                </span>
+                {% if item.scheduled_time %}<time>{{ item.scheduled_time }}</time>{% endif %}
+              </div>
+              <h3>{{ item.title }}</h3>
+              {% if item.notes %}<p>{{ item.notes }}</p>{% endif %}
+            </div>
+            <div class="row-actions">
+              <form method="post" action="/today/items/{{ item.id }}/status">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="status" value="{% if item.status == 'done' %}pending{% else %}done{% endif %}">
+                <button class="button button-small" type="submit">{% if item.status == 'done' %}恢复{% else %}完成{% endif %}</button>
+              </form>
+              <form method="post" action="/today/items/{{ item.id }}/delete" onsubmit="return confirm('删除这项安排？')">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <button class="button button-small button-danger" type="submit">删除</button>
+              </form>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>今天还没有录入安排</strong>
+        <p>先添加学校作业；有课程或临时事项时再补充。</p>
+      </div>
+    {% endif %}
+
+    {% if today_courses %}
+      <div class="today-course-list" aria-label="今天的固定课程">
+        <strong>今天的固定课程</strong>
+        {% for course in today_courses %}
+          <div class="inline-course">
+            <span>{{ course.start_time }} · {{ course.name }}</span>
+            <small>{% if course.delivery_type == 'online' %}线上{% else %}线下{% endif %}{% if course.preparation_minutes %}，提前 {{ course.preparation_minutes }} 分钟准备{% endif %}</small>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <details class="editor">
+      <summary>添加今日安排</summary>
+      <form method="post" action="/today/items" class="form-grid">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>
+          <span>类型</span>
+          <select name="item_type" required>
+            <option value="homework">学校作业</option>
+            <option value="course">今日课程</option>
+            <option value="temporary">临时安排</option>
+          </select>
+        </label>
+        <label class="span-2">
+          <span>名称</span>
+          <input name="title" required placeholder="例如：数学练习册第 12 页">
+        </label>
+        <label>
+          <span>科目（可选）</span>
+          <input name="subject" placeholder="数学">
+        </label>
+        <label>
+          <span>开始或截止时间</span>
+          <input type="time" name="scheduled_time">
+        </label>
+        <label>
+          <span>预计时长（分钟）</span>
+          <input type="number" name="estimated_minutes" min="1" inputmode="numeric">
+        </label>
+        <label>
+          <span>提前准备（分钟）</span>
+          <input type="number" name="preparation_minutes" min="0" value="0" inputmode="numeric">
+        </label>
+        <label class="span-2">
+          <span>备注（可选）</span>
+          <textarea name="notes" rows="2" placeholder="需要携带的物品或补充说明"></textarea>
+        </label>
+        <button class="button button-primary span-2" type="submit">保存今日安排</button>
+      </form>
+    </details>
+  </section>
+
+  <section class="section-block" id="today-reminder">
+    <div class="section-heading">
+      <div>
+        <h2>今天的提醒方式</h2>
+        <p>孩子听完首次简报后可以先吃饭，不要求立即回应。</p>
+      </div>
+    </div>
+    <form method="post" action="/today/preferences" class="form-grid form-surface">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>
+        <span>今天按哪类日期处理</span>
+        <select name="day_type">
+          <option value="auto" {% if preferences.day_type == 'auto' %}selected{% endif %}>自动判断周末</option>
+          <option value="school_day" {% if preferences.day_type == 'school_day' %}selected{% endif %}>上学日</option>
+          <option value="rest_day" {% if preferences.day_type == 'rest_day' %}selected{% endif %}>休息日 / 节假日</option>
+        </select>
+      </label>
+      <label>
+        <span>第二次提醒</span>
+        <select name="second_reminder_mode">
+          <option value="default" {% if preferences.second_reminder_mode == 'default' %}selected{% endif %}>使用默认时间</option>
+          <option value="custom" {% if preferences.second_reminder_mode == 'custom' %}selected{% endif %}>今天单独设置</option>
+          <option value="disabled" {% if preferences.second_reminder_mode == 'disabled' %}selected{% endif %}>今天不提醒</option>
+        </select>
+      </label>
+      <label>
+        <span>今天单独提醒时间</span>
+        <input type="time" name="second_reminder_time" value="{{ preferences.second_reminder_time or '' }}">
+      </label>
+      <div class="check-group">
+        <label class="check-row">
+          <input type="checkbox" name="homework_reminders_enabled" {% if preferences.homework_reminders_enabled %}checked{% endif %}>
+          <span>允许作业开始提醒</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" name="posture_reminders_enabled" {% if preferences.posture_reminders_enabled %}checked{% endif %}>
+          <span>允许姿势语音提醒</span>
+        </label>
+      </div>
+      <button class="button button-primary span-2" type="submit">保存今天的设置</button>
+    </form>
+  </section>
+
+  <section class="section-block" id="weekly-courses">
+    <div class="section-heading">
+      <div>
+        <h2>每周固定课程</h2>
+        <p>启用的课程会自动出现在对应日期的简报中。</p>
+      </div>
+    </div>
+    {% if weekly_courses %}
+      <div class="compact-list">
+        {% for course in weekly_courses %}
+          <div class="course-row {% if not course.enabled %}is-muted{% endif %}">
+            <div>
+              <strong>{{ course.name }}</strong>
+              <span>星期{{ course.weekday }} · {{ course.start_time }} · {% if course.delivery_type == 'online' %}线上{% else %}线下{% endif %}</span>
+            </div>
+            <div class="row-actions">
+              <form method="post" action="/courses/{{ course.id }}/enabled">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="enabled" value="{% if course.enabled %}0{% else %}1{% endif %}">
+                <button class="button button-small" type="submit">{% if course.enabled %}停用{% else %}启用{% endif %}</button>
+              </form>
+              <form method="post" action="/courses/{{ course.id }}/delete" onsubmit="return confirm('删除这个固定课程？')">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <button class="button button-small button-danger" type="submit">删除</button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <details class="editor">
+      <summary>添加固定课程</summary>
+      <form method="post" action="/courses" class="form-grid">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="span-2">
+          <span>课程名称</span>
+          <input name="name" required placeholder="例如：英语课">
+        </label>
+        <label>
+          <span>星期</span>
+          <select name="weekday">
+            {% for number in range(1, 8) %}<option value="{{ number }}">星期{{ number }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>开始时间</span>
+          <input type="time" name="start_time" required>
+        </label>
+        <label>
+          <span>上课方式</span>
+          <select name="delivery_type">
+            <option value="online">线上</option>
+            <option value="offline">线下</option>
+          </select>
+        </label>
+        <label>
+          <span>提前准备（分钟）</span>
+          <input type="number" name="preparation_minutes" min="0" value="10">
+        </label>
+        <label>
+          <span>交通时间（分钟）</span>
+          <input type="number" name="travel_minutes" min="0" value="0">
+        </label>
+        <button class="button button-primary span-2" type="submit">保存固定课程</button>
+      </form>
+    </details>
+  </section>
+
+  <section class="section-block" id="defaults">
+    <div class="section-heading">
+      <div>
+        <h2>默认提醒时间</h2>
+        <p>今天单独设置后，只覆盖当天，不修改这里的长期默认值。</p>
+      </div>
+    </div>
+    <form method="post" action="/settings" class="form-grid form-surface">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>
+        <span>上学日首次简报</span>
+        <input type="time" name="first_briefing_weekday_time" value="{{ settings.first_briefing_weekday_time }}" required>
+      </label>
+      <label>
+        <span>休息日首次简报</span>
+        <input type="time" name="first_briefing_rest_day_time" value="{{ settings.first_briefing_rest_day_time }}" required>
+      </label>
+      <label>
+        <span>上学日第二次提醒</span>
+        <input type="time" name="second_reminder_weekday_time" value="{{ settings.second_reminder_weekday_time }}" required>
+      </label>
+      <label>
+        <span>休息日第二次提醒</span>
+        <input type="time" name="second_reminder_rest_day_time" value="{{ settings.second_reminder_rest_day_time }}" required>
+      </label>
+      <button class="button button-primary span-2" type="submit">保存默认设置</button>
+    </form>
+  </section>
+</main>
+{% endblock %}

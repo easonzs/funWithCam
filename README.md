@@ -1,0 +1,201 @@
+# FunWithCam
+
+FunWithCam 是一个运行在家庭局域网内的本地学习助理。
+
+当前仓库是独立于旧原型的新实现。当前版本已经形成“家长 Web 录入 → 书桌人物出现 → 人脸身份确认 → 今日简报 → 可配置第二次提醒”的本地闭环。
+
+## 当前进度
+
+- 产品与业务逻辑文档；
+- 技术设计文档；
+- 纯业务工作流状态机；
+- SQLite 初始迁移；
+- 当日工作流状态持久化；
+- go2rtc 视频流采集与断流重连；
+- MediaPipe 人物出现检测；
+- macOS `say` 语音输出；
+- 摄像头到语音输出的端到端测试命令；
+- YuNet + SFace 本地人脸录入和多帧身份验证；
+- 测试身份与正式身份隔离保存；
+- FastAPI + Jinja2 家庭局域网 Web；
+- 家长密码登录、会话 Cookie 和 CSRF 防护；
+- 今日作业、今日课程、临时安排和每周固定课程录入；
+- 上学日/休息日默认提醒时间与当天覆盖；
+- 身份、日程和 `say` 集成的首次简报与第二次提醒；
+- 单元测试。
+
+## 本地开发
+
+```bash
+uv venv --python 3.11
+source .venv/bin/activate
+uv pip install -e '.[test]'
+python -m unittest discover -s tests -v
+```
+
+复制并检查配置：
+
+```bash
+cp config/config.example.yaml config/config.yaml
+```
+
+`video.stream_url` 保持指向 go2rtc 的本地输出：
+
+```bash
+rtsp://127.0.0.1:8554/study_room
+```
+
+初始化数据库并测试语音：
+
+```bash
+funwithcam init-db --database data/funwithcam.db
+funwithcam audio-test --config config/config.yaml
+```
+
+确认 go2rtc 已经提供 `study_room` 流后，运行摄像头端到端测试：
+
+```bash
+funwithcam camera-test --config config/config.yaml
+```
+
+测试命令会在学习区域持续检测到人物后播放一次测试语音并退出。它不写入正式的每日提醒状态。
+
+## 家长 Web
+
+首次使用先创建或重置家长登录：
+
+```bash
+funwithcam create-admin \
+  --config config/config.yaml \
+  --database data/funwithcam.db \
+  --username parent
+```
+
+只启动 Web 进行录入测试：
+
+```bash
+funwithcam web \
+  --config config/config.yaml \
+  --database data/funwithcam.db
+```
+
+手机与 MacBook 连接同一个家庭局域网后，访问：
+
+```text
+http://<MacBook 的局域网 IP>:8000
+```
+
+页面支持：
+
+- 今日作业、课程和临时安排；
+- 完成状态；
+- 每周固定课程；
+- 上学日和休息日默认提醒时间；
+- 今天单独覆盖第二次提醒时间；
+- 今天关闭作业开始提醒。
+
+## 人脸身份
+
+人脸模型来自 OpenCV Zoo，运行时完全在本机处理。默认只保存归一化后的人脸特征，不保存照片或视频。
+
+先录入测试身份：
+
+```bash
+funwithcam face-enroll \
+  --config config/config.yaml \
+  --database data/funwithcam.db \
+  --role child \
+  --name child \
+  --profile test
+```
+
+验证测试身份：
+
+```bash
+funwithcam face-verify \
+  --config config/config.yaml \
+  --database data/funwithcam.db \
+  --profile test
+```
+
+验证会综合多帧结果，只输出 `child`、`parent` 或 `unknown`，不会单独触发正式提醒。
+
+测试通过后重新录入正式身份。正式服务要求至少有一个孩子和一个常进入区域的家长：
+
+```bash
+funwithcam face-enroll --role child --name child --profile formal
+funwithcam face-enroll --role parent --name parent_1 --profile formal
+funwithcam face-verify --profile formal
+```
+
+录入命令会依次语音提示正面、轻微左转和轻微右转。测试身份与正式身份在数据库中隔离。
+
+### 人脸调试照片
+
+当前本机的 `config/config.yaml` 已开启：
+
+```yaml
+identity:
+  save_debug_frames: true
+  debug_dir: data/face_debug
+  debug_face_limit: 30
+  debug_rejected_limit: 10
+```
+
+再次运行 `face-enroll` 或 `face-verify` 时，每次命令会建立独立目录，例如：
+
+```text
+data/face_debug/face-enroll_formal_child_20261011_103000/
+data/face_debug/face-verify_formal_20261011_103500/
+```
+
+目录内容：
+
+- `*_full.jpg`：摄像头完整画面，标有人脸框、五个关键点、检脸置信度和匹配分数；
+- `*_aligned.jpg`：实际送入 SFace 提取特征的对齐人脸图；
+- `manifest.json`：每张图片的检测原因、身份结果、匹配分数和命令最终结果；
+- `rejected_no_face`、`rejected_multiple_faces`、`rejected_face_too_small`：未进入识别的人脸检测失败画面。
+
+为避免持续占用磁盘，每次最多保存 30 组有效人脸和 10 张检测失败画面。确认问题后，把 `save_debug_frames` 改为 `false` 即可停止保存。照片只写入本机 `data/face_debug`，不会保存到身份特征表。
+
+模型文件及 SHA-256：
+
+- `models/face_detection_yunet_2023mar.onnx`: `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4`
+- `models/face_recognition_sface_2021dec.onnx`: `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79`
+
+对应许可证保存在 `models/LICENSE-YuNet.txt` 和 `models/LICENSE-SFace.txt`。
+
+## 正式运行
+
+完成家长账号和正式人脸录入后，使用一个命令同时启动 FastAPI Web 与提醒服务：
+
+```bash
+funwithcam serve \
+  --config config/config.yaml \
+  --database data/funwithcam.db
+```
+
+运行规则：
+
+- 达到 Web 配置的首次简报时间后，人物需在书桌区域稳定出现；
+- 多帧确认是孩子才播放今日简报；
+- 识别为家长时保持静默，不消耗当天简报；
+- `unknown` 或多人画面不触发简报；
+- 第二次提醒只在首次简报已经完成后执行；
+- 第二次提醒晚于计划超过 30 分钟，或计划时间早于实际首次简报时，不补播旧提醒；
+- 当前版本只有本地语音输出，麦克风/VAD/ASR 和“开始写作业”语音输入属于下一阶段。
+
+诊断时也可以只运行摄像头提醒服务：
+
+```bash
+funwithcam assistant-run \
+  --config config/config.yaml \
+  --database data/funwithcam.db
+```
+
+## 文档
+
+- `PRODUCT.md`
+- `docs/PRODUCT_LOGIC.md`
+- `docs/TECHNICAL_DESIGN.md`
+
