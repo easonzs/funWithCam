@@ -1,0 +1,51 @@
+{% extends "app_shell.html" %}
+{% block title %}添加今日安排 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="form-page-heading">
+  <a class="back-link" href="/schedule">← 返回日程</a>
+  <h1>添加今日安排</h1>
+  <p>名称是唯一必填内容，时间和备注可以稍后补充。</p>
+</header>
+
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<form method="post" action="/today/items" class="form-panel form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>
+    <span>类型</span>
+    <select name="item_type" required>
+      <option value="homework">学校作业</option>
+      <option value="course">今日课程</option>
+      <option value="temporary">临时安排</option>
+    </select>
+  </label>
+  <label class="span-2">
+    <span>名称</span>
+    <input name="title" required autofocus placeholder="例如：数学练习册第 12 页">
+  </label>
+  <label>
+    <span>科目（可选）</span>
+    <input name="subject" placeholder="例如：数学">
+  </label>
+  <label>
+    <span>开始或截止时间（可选）</span>
+    <input type="time" name="scheduled_time">
+  </label>
+  <label>
+    <span>预计时长（分钟，可选）</span>
+    <input type="number" name="estimated_minutes" min="1" inputmode="numeric">
+  </label>
+  <label>
+    <span>提前准备（分钟）</span>
+    <input type="number" name="preparation_minutes" min="0" value="0" inputmode="numeric">
+  </label>
+  <label class="span-2">
+    <span>备注（可选）</span>
+    <textarea name="notes" rows="3" placeholder="需要携带的物品或补充说明"></textarea>
+  </label>
+  <div class="form-actions span-2">
+    <a class="button" href="/schedule">取消</a>
+    <button class="button button-primary" type="submit">保存今日安排</button>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "app_shell.html" %}
+{% block title %}学习记录 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>学习记录</h1>
+    <p class="page-description">这里只展示已经真实记录的数据，不对孩子做综合评分。</p>
+  </div>
+</header>
+
+<section class="content-section records-section" aria-labelledby="records-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="records-title">最近的学习</h2>
+      <p>学习时长只统计处于“学习记录中”的时间，不包含暂停。</p>
+    </div>
+  </div>
+  {% if records %}
+    <div class="records-table-wrap">
+      <table class="records-table">
+        <thead>
+          <tr>
+            <th scope="col">日期</th>
+            <th scope="col">开始</th>
+            <th scope="col">结束</th>
+            <th scope="col">学习时长</th>
+            <th scope="col">状态</th>
+            <th scope="col">基准版本</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for record in records %}
+            <tr>
+              <td>{{ record.session_date }}</td>
+              <td>{{ record.started_at[11:16] }}</td>
+              <td>{% if record.finished_at %}{{ record.finished_at[11:16] }}{% else %}—{% endif %}</td>
+              <td>{{ record.study_minutes }} 分钟</td>
+              <td><span class="record-state">{{ record.state_label }}</span></td>
+              <td>{% if record.calibration_version_id %}版本 {{ record.calibration_version_id }}{% else %}未使用{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <strong>还没有学习记录</strong>
+      <p>孩子开始并完成一次学习后，这里会显示日期、时长和所用基准版本。</p>
+      <a class="button" href="/">返回今日</a>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

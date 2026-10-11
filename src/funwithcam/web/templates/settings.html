@@ -1,0 +1,105 @@
+{% extends "app_shell.html" %}
+{% block title %}设置 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>设置</h1>
+    <p class="page-description">管理长期默认值、设备能力和孩子的动作基准。</p>
+  </div>
+</header>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<div class="settings-layout">
+  <section class="settings-section" aria-labelledby="family-settings-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="family-settings-title">孩子与长期提醒</h2>
+        <p>这些时间作为每天的默认值，当天仍可单独覆盖。</p>
+      </div>
+    </div>
+    <form method="post" action="/settings" class="form-grid settings-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="span-2">
+        <span>孩子名字或称呼</span>
+        <input type="text" name="child_name" value="{{ settings.child_name }}" required>
+      </label>
+      <label>
+        <span>上学日首次简报</span>
+        <input type="time" name="first_briefing_weekday_time" value="{{ settings.first_briefing_weekday_time }}" required>
+      </label>
+      <label>
+        <span>休息日首次简报</span>
+        <input type="time" name="first_briefing_rest_day_time" value="{{ settings.first_briefing_rest_day_time }}" required>
+      </label>
+      <label>
+        <span>上学日第二次提醒</span>
+        <input type="time" name="second_reminder_weekday_time" value="{{ settings.second_reminder_weekday_time }}" required>
+      </label>
+      <label>
+        <span>休息日第二次提醒</span>
+        <input type="time" name="second_reminder_rest_day_time" value="{{ settings.second_reminder_rest_day_time }}" required>
+      </label>
+      <div class="form-actions span-2">
+        <button class="button button-primary" type="submit">保存长期设置</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="settings-section" aria-labelledby="capability-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="capability-title">设备能力</h2>
+        <p>这里显示当前配置是否具备运行条件。</p>
+      </div>
+    </div>
+    <dl class="capability-list">
+      <div>
+        <dt>网络摄像头</dt>
+        <dd class="{% if camera_configured %}is-ready{% else %}is-unavailable{% endif %}">
+          {% if camera_configured %}已配置{% else %}未配置{% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>本地语音口令</dt>
+        <dd class="{% if speech_enabled %}is-ready{% else %}is-unavailable{% endif %}">
+          {% if speech_enabled %}已开启{% else %}未开启{% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>本地数据</dt>
+        <dd class="is-ready">保存在这台 MacBook</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="settings-section calibration-setting" aria-labelledby="calibration-setting-title">
+    <div>
+      <h2 id="calibration-setting-title">动作与光线基准</h2>
+      {% if calibration_version %}
+        <p>当前使用版本 {{ calibration_version.id }}，保存于 {{ calibration_version.created_at[:16].replace('T', ' ') }}。</p>
+      {% else %}
+        <p>尚未录入。录入后，姿势和光线检测会以孩子自己的正常状态为依据。</p>
+      {% endif %}
+    </div>
+    <a class="button" href="/calibration">
+      {% if calibration_version %}查看或重新录入{% else %}开始录入{% endif %}
+    </a>
+  </section>
+
+  <details class="debug-tools">
+    <summary>调试工具</summary>
+    <div class="debug-tools-body">
+      <div>
+        <strong>重置今日首次提醒</strong>
+        <p>清除 {{ today.strftime('%Y年%m月%d日') }} 的首次提醒状态，便于重新测试。</p>
+      </div>
+      <form method="post" action="/today/reset-first-briefing" onsubmit="return confirm('确认清除今天的首次提醒记录并重新测试？')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="button button-danger" type="submit">重置今日首次提醒</button>
+      </form>
+    </div>
+  </details>
+</div>
+{% endblock %}

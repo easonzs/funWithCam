@@ -115,6 +115,49 @@ class StudySessionRepositoryTest(unittest.TestCase):
 
         self.assertEqual(second_id, latest["id"])
 
+    def test_list_recent_counts_only_studying_intervals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+            workflow = WorkflowRepository(database)
+            sessions = StudySessionRepository(database)
+            now = datetime(2026, 10, 12, 18, 0, tzinfo=timezone.utc)
+            workflow.save(
+                "2026-10-12",
+                WorkflowSnapshot(WorkflowState.WAITING_TO_START),
+                now,
+            )
+
+            sessions.request_start("2026-10-12", now)
+            sessions.confirm_precheck(
+                "2026-10-12",
+                "web",
+                now + timedelta(seconds=5),
+            )
+            sessions.pause(
+                "2026-10-12",
+                now + timedelta(minutes=20),
+            )
+            sessions.request_resume(
+                "2026-10-12",
+                now + timedelta(minutes=25),
+            )
+            sessions.confirm_precheck(
+                "2026-10-12",
+                "web",
+                now + timedelta(minutes=25, seconds=5),
+            )
+            sessions.finish(
+                "2026-10-12",
+                now + timedelta(minutes=45),
+            )
+
+            recent = sessions.list_recent()
+
+        self.assertEqual(1, len(recent))
+        self.assertEqual("2026-10-12", recent[0]["session_date"])
+        self.assertAlmostEqual(39.8333, recent[0]["study_minutes"], places=3)
+
     def test_cancelled_precheck_does_not_create_session(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "test.db")

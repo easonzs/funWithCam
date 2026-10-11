@@ -1,0 +1,116 @@
+{% extends "app_shell.html" %}
+{% block title %}日程 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <p class="date-line">{{ today.strftime('%Y年%m月%d日') }} · {{ weekday }}</p>
+    <h1>日程</h1>
+    <p class="page-description">管理今天要播报的内容，以及每周自动出现的固定课程。</p>
+  </div>
+  <a class="button button-primary" href="{% if tab == 'courses' %}/courses/new{% else %}/schedule/new{% endif %}">
+    {% if tab == 'courses' %}添加固定课程{% else %}添加今日安排{% endif %}
+  </a>
+</header>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<nav class="tab-list" aria-label="日程分类">
+  <a href="/schedule" {% if tab == 'today' %}aria-current="page"{% endif %}>今日安排</a>
+  <a href="/schedule?tab=courses" {% if tab == 'courses' %}aria-current="page"{% endif %}>固定课程</a>
+</nav>
+
+{% if tab == 'today' %}
+  <section class="content-section schedule-section" aria-labelledby="today-schedule-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="today-schedule-title">今天需要完成的事</h2>
+        <p>完成状态只影响家长查看，不会删除原始安排。</p>
+      </div>
+      <span class="count-badge">{{ items|length }} 项</span>
+    </div>
+    {% if items %}
+      <div class="item-list">
+        {% for item in items %}
+          <article class="agenda-row {% if item.status == 'done' %}is-done{% endif %}">
+            <div class="agenda-main">
+              <div class="agenda-meta">
+                <span class="type-tag type-{{ item.item_type }}">
+                  {% if item.item_type == 'homework' %}作业{% elif item.item_type == 'course' %}课程{% else %}临时{% endif %}
+                </span>
+                {% if item.scheduled_time %}<time>{{ item.scheduled_time }}</time>{% endif %}
+                {% if item.estimated_minutes %}<span>预计 {{ item.estimated_minutes }} 分钟</span>{% endif %}
+              </div>
+              <h3>{{ item.title }}</h3>
+              {% if item.notes %}<p>{{ item.notes }}</p>{% endif %}
+            </div>
+            <div class="row-actions">
+              <form method="post" action="/today/items/{{ item.id }}/status">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="status" value="{% if item.status == 'done' %}pending{% else %}done{% endif %}">
+                <button class="button button-small" type="submit">{% if item.status == 'done' %}恢复{% else %}完成{% endif %}</button>
+              </form>
+              <form method="post" action="/today/items/{{ item.id }}/delete" onsubmit="return confirm('删除这项安排？')">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <button class="button button-small button-danger" type="submit">删除</button>
+              </form>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>今天还没有录入安排</strong>
+        <p>学校作业、当天课程和临时事项都可以记在这里。</p>
+        <a class="button button-primary" href="/schedule/new">添加今日安排</a>
+      </div>
+    {% endif %}
+  </section>
+{% else %}
+  <section class="content-section schedule-section" aria-labelledby="course-schedule-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="course-schedule-title">每周固定课程</h2>
+        <p>启用的课程会在对应日期自动加入首次简报。</p>
+      </div>
+      <span class="count-badge">{{ weekly_courses|length }} 项</span>
+    </div>
+    {% if weekly_courses %}
+      <div class="item-list">
+        {% for course in weekly_courses %}
+          <article class="course-row {% if not course.enabled %}is-muted{% endif %}">
+            <div class="agenda-main">
+              <div class="agenda-meta">
+                <span class="type-tag type-course">{% if course.enabled %}已启用{% else %}已停用{% endif %}</span>
+                <span>
+                  {% if course.weekday == 1 %}星期一{% elif course.weekday == 2 %}星期二{% elif course.weekday == 3 %}星期三{% elif course.weekday == 4 %}星期四{% elif course.weekday == 5 %}星期五{% elif course.weekday == 6 %}星期六{% else %}星期日{% endif %}
+                  · {{ course.start_time }}
+                </span>
+              </div>
+              <h3>{{ course.name }}</h3>
+              <p>{% if course.delivery_type == 'online' %}线上课程{% else %}线下课程{% endif %}{% if course.preparation_minutes %} · 提前 {{ course.preparation_minutes }} 分钟准备{% endif %}{% if course.travel_minutes %} · 交通 {{ course.travel_minutes }} 分钟{% endif %}</p>
+            </div>
+            <div class="row-actions">
+              <form method="post" action="/courses/{{ course.id }}/enabled">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="enabled" value="{% if course.enabled %}0{% else %}1{% endif %}">
+                <button class="button button-small" type="submit">{% if course.enabled %}停用{% else %}启用{% endif %}</button>
+              </form>
+              <form method="post" action="/courses/{{ course.id }}/delete" onsubmit="return confirm('删除这个固定课程？')">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <button class="button button-small button-danger" type="submit">删除</button>
+              </form>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>还没有固定课程</strong>
+        <p>只需录入一次，之后会按星期自动加入当天安排。</p>
+        <a class="button button-primary" href="/courses/new">添加固定课程</a>
+      </div>
+    {% endif %}
+  </section>
+{% endif %}
+{% endblock %}

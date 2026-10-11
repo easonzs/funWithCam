@@ -26,6 +26,43 @@ class StudySessionRepository:
             ).fetchone()
         return None if row is None else dict(row)
 
+    def list_recent(self, limit: int = 30) -> list[dict]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        with self._database.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    study_sessions.*,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN session_intervals.interval_type = 'STUDYING'
+                                THEN (
+                                    julianday(
+                                        COALESCE(
+                                            session_intervals.ended_at,
+                                            study_sessions.updated_at
+                                        )
+                                    )
+                                    - julianday(session_intervals.started_at)
+                                ) * 1440
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS study_minutes
+                FROM study_sessions
+                LEFT JOIN session_intervals
+                    ON session_intervals.study_session_id = study_sessions.id
+                GROUP BY study_sessions.id
+                ORDER BY study_sessions.started_at DESC, study_sessions.id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def request_start(self, session_date: str, now: datetime) -> None:
         timestamp = now.isoformat()
         with self._database.connection() as connection:

@@ -54,6 +54,20 @@ WORKFLOW_LABELS = {
     "COMPLETED": "今日学习已结束",
     "DISABLED": "今日提醒已停用",
 }
+WORKFLOW_GUIDANCE = {
+    "WAITING_FOR_FIRST_APPEARANCE": "系统会在合适时间识别孩子并播放今日安排。",
+    "IDENTITY_CONFIRMING": "正在确认书桌区域里是否是孩子。",
+    "BRIEFED": "正在播放今日安排，请稍候。",
+    "WAITING_TO_START": "今日安排已经播报，孩子准备好后可以开始学习。",
+    "PRECHECK": "正在检查摄像头、书桌区域、孩子身份和光线。",
+    "STUDYING": "正在记录本次学习，姿势和光线异常会写入记录。",
+    "AWAY_GRACE": "孩子暂时离开座位，系统正在等待返回。",
+    "PAUSED": "本次学习已经暂停，继续时会重新检查书桌状态。",
+    "INTERRUPTED": "学习记录暂时中断，可以重新开始检查。",
+    "FINISH_CONFIRMING": "正在等待确认是否结束本次学习。",
+    "COMPLETED": "今天的学习记录已经结束，可以再次开始新的记录。",
+    "DISABLED": "今天不会继续播放提醒。",
+}
 
 
 class _LoginRequired(Exception):
@@ -101,6 +115,25 @@ def create_app(
     workflow = WorkflowRepository(database)
     web_root = Path(__file__).resolve().parent
     templates = Jinja2Templates(directory=str(web_root / "templates"))
+
+    def render_page(
+        request: Request,
+        template_name: str,
+        session,
+        active_nav: str,
+        **context,
+    ):
+        context.update(
+            {
+                "csrf": session.csrf_token,
+                "active_nav": active_nav,
+            }
+        )
+        return templates.TemplateResponse(
+            request,
+            template_name,
+            context,
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -216,28 +249,143 @@ def create_app(
         )
         items = family.list_agenda(today)
         today_courses = family.list_courses_for_date(today)
-        return templates.TemplateResponse(
+        preferences = family.get_daily_preferences(today)
+        settings = family.get_settings()
+        reminder_summary = _reminder_summary(
+            today.weekday(),
+            preferences,
+            settings,
+        )
+        return render_page(
             request,
             "dashboard.html",
-            {
-                "username": session.username,
-                "csrf": session.csrf_token,
-                "today": today,
-                "weekday": WEEKDAY_NAMES[today.weekday()],
-                "items": items,
-                "today_courses": today_courses,
-                "today_count": len(items) + len(today_courses),
-                "weekly_courses": family.list_weekly_courses(),
-                "preferences": family.get_daily_preferences(today),
-                "settings": family.get_settings(),
-                "workflow_state": WORKFLOW_LABELS[workflow_value],
-                "workflow_value": workflow_value,
-                "study_session": study_sessions.get_latest(today.isoformat()),
-                "precheck_result": prechecks.latest(today.isoformat()),
-                "calibration_version": calibrations.get_latest_version(),
-                "message": message,
-                "error": error,
-            },
+            session,
+            "today",
+            today=today,
+            weekday=WEEKDAY_NAMES[today.weekday()],
+            items=items,
+            today_courses=today_courses,
+            reminder_summary=reminder_summary,
+            workflow_state=WORKFLOW_LABELS[workflow_value],
+            workflow_guidance=WORKFLOW_GUIDANCE[workflow_value],
+            workflow_value=workflow_value,
+            study_session=study_sessions.get_latest(today.isoformat()),
+            precheck_result=prechecks.latest(today.isoformat()),
+            message=message,
+            error=error,
+        )
+
+    @app.get("/schedule", response_class=HTMLResponse)
+    def schedule_page(
+        request: Request,
+        tab: str = "today",
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        if tab not in ("today", "courses"):
+            tab = "today"
+        today = datetime.now(timezone).date()
+        return render_page(
+            request,
+            "schedule.html",
+            session,
+            "schedule",
+            tab=tab,
+            today=today,
+            weekday=WEEKDAY_NAMES[today.weekday()],
+            items=family.list_agenda(today),
+            weekly_courses=family.list_weekly_courses(),
+            message=message,
+            error=error,
+        )
+
+    @app.get("/schedule/new", response_class=HTMLResponse)
+    def new_agenda_page(
+        request: Request,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        return render_page(
+            request,
+            "agenda_form.html",
+            session,
+            "schedule",
+            error=error,
+        )
+
+    @app.get("/courses/new", response_class=HTMLResponse)
+    def new_course_page(
+        request: Request,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        return render_page(
+            request,
+            "course_form.html",
+            session,
+            "schedule",
+            error=error,
+        )
+
+    @app.get("/today/settings", response_class=HTMLResponse)
+    def today_settings_page(
+        request: Request,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        today = datetime.now(timezone).date()
+        return render_page(
+            request,
+            "today_settings.html",
+            session,
+            "today",
+            today=today,
+            weekday=WEEKDAY_NAMES[today.weekday()],
+            preferences=family.get_daily_preferences(today),
+            message=message,
+            error=error,
+        )
+
+    @app.get("/records", response_class=HTMLResponse)
+    def records_page(request: Request):
+        _, session = _require_session(request, auth, timezone)
+        records = study_sessions.list_recent()
+        for record in records:
+            record["study_minutes"] = int(round(record["study_minutes"]))
+            record["state_label"] = WORKFLOW_LABELS.get(
+                record["state"],
+                record["state"],
+            )
+        return render_page(
+            request,
+            "records.html",
+            session,
+            "records",
+            records=records,
+        )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_page(
+        request: Request,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        today = datetime.now(timezone).date()
+        return render_page(
+            request,
+            "settings.html",
+            session,
+            "settings",
+            settings=family.get_settings(),
+            calibration_version=calibrations.get_latest_version(),
+            speech_enabled=config.speech.enabled,
+            camera_configured=bool(config.video.stream_url.strip()),
+            today=today,
+            message=message,
+            error=error,
         )
 
     @app.get("/calibration", response_class=HTMLResponse)
@@ -260,21 +408,19 @@ def create_app(
                 for index, item in enumerate(CALIBRATION_STEPS, start=1)
                 if item["key"] == draft["current_step"]
             )
-        return templates.TemplateResponse(
+        return render_page(
             request,
             "calibration.html",
-            {
-                "username": session.username,
-                "csrf": session.csrf_token,
-                "draft": draft,
-                "current": current,
-                "current_number": current_number,
-                "steps": CALIBRATION_STEPS,
-                "latest_version": calibrations.get_latest_version(),
-                "study_active": calibrations.has_active_study_session(),
-                "message": message,
-                "error": error,
-            },
+            session,
+            "settings",
+            draft=draft,
+            current=current,
+            current_number=current_number,
+            steps=CALIBRATION_STEPS,
+            latest_version=calibrations.get_latest_version(),
+            study_active=calibrations.has_active_study_session(),
+            message=message,
+            error=error,
         )
 
     @app.post("/calibration/start")
@@ -393,8 +539,8 @@ def create_app(
                 datetime.now(timezone),
             )
         except ValueError as exc:
-            return _redirect("/", error=str(exc))
-        return _redirect("/", message="今日安排已添加")
+            return _redirect("/schedule/new", error=str(exc))
+        return _redirect("/schedule", message="今日安排已添加")
 
     @app.post("/today/items/{item_id}/status")
     async def set_item_status(item_id: int, request: Request):
@@ -408,8 +554,8 @@ def create_app(
                 datetime.now(timezone),
             )
         except ValueError as exc:
-            return _redirect("/", error=str(exc))
-        return _redirect("/", message="完成状态已更新")
+            return _redirect("/schedule", error=str(exc))
+        return _redirect("/schedule", message="完成状态已更新")
 
     @app.post("/today/items/{item_id}/delete")
     async def delete_item(item_id: int, request: Request):
@@ -417,7 +563,7 @@ def create_app(
         form = await request.form()
         _require_csrf(token, str(form.get("csrf", "")))
         family.delete_agenda(item_id)
-        return _redirect("/", message="安排已删除")
+        return _redirect("/schedule", message="安排已删除")
 
     @app.post("/today/preferences")
     async def save_today_preferences(request: Request):
@@ -435,8 +581,11 @@ def create_app(
                 datetime.now(timezone),
             )
         except ValueError as exc:
-            return _redirect("/", error=str(exc))
-        return _redirect("/", message="今日提醒设置已保存")
+            return _redirect("/today/settings", error=str(exc))
+        return _redirect(
+            "/today/settings",
+            message="今天的提醒设置已保存",
+        )
 
     @app.post("/today/reset-first-briefing")
     async def reset_first_briefing(request: Request):
@@ -449,8 +598,8 @@ def create_app(
                 datetime.now(timezone),
             )
         except ValueError as exc:
-            return _redirect("/", error=str(exc))
-        return _redirect("/", message="今日首次提醒已重置")
+            return _redirect("/settings", error=str(exc))
+        return _redirect("/settings", message="今日首次提醒已重置")
 
     @app.post("/study/{action}")
     async def change_study_state(action: str, request: Request):
@@ -494,8 +643,11 @@ def create_app(
                 datetime.now(timezone),
             )
         except ValueError as exc:
-            return _redirect("/", error=str(exc))
-        return _redirect("/", message="固定课程已添加")
+            return _redirect("/courses/new", error=str(exc))
+        return _redirect(
+            "/schedule?tab=courses",
+            message="固定课程已添加",
+        )
 
     @app.post("/courses/{course_id}/enabled")
     async def set_course_enabled(course_id: int, request: Request):
@@ -507,7 +659,10 @@ def create_app(
             str(form.get("enabled", "")) == "1",
             datetime.now(timezone),
         )
-        return _redirect("/", message="课程状态已更新")
+        return _redirect(
+            "/schedule?tab=courses",
+            message="课程状态已更新",
+        )
 
     @app.post("/courses/{course_id}/delete")
     async def delete_course(course_id: int, request: Request):
@@ -515,7 +670,10 @@ def create_app(
         form = await request.form()
         _require_csrf(token, str(form.get("csrf", "")))
         family.delete_weekly_course(course_id)
-        return _redirect("/", message="固定课程已删除")
+        return _redirect(
+            "/schedule?tab=courses",
+            message="固定课程已删除",
+        )
 
     @app.post("/settings")
     async def save_settings(request: Request):
@@ -542,8 +700,8 @@ def create_app(
                 datetime.now(timezone),
             )
         except ValueError as exc:
-            return _redirect("/", error=str(exc))
-        return _redirect("/", message="默认提醒设置已保存")
+            return _redirect("/settings", error=str(exc))
+        return _redirect("/settings", message="长期设置已保存")
 
     return app
 
@@ -565,8 +723,50 @@ def _require_csrf(token: str, submitted: str) -> None:
 
 def _redirect(path: str, **query: str) -> RedirectResponse:
     if query:
-        path = "{}?{}".format(path, urlencode(query))
+        separator = "&" if "?" in path else "?"
+        path = "{}{}{}".format(path, separator, urlencode(query))
     return RedirectResponse(path, status_code=303)
+
+
+def _reminder_summary(
+    weekday: int,
+    preferences: dict,
+    settings: dict,
+) -> dict:
+    day_type = preferences["day_type"]
+    if day_type == "auto":
+        day_type = "school_day" if weekday < 5 else "rest_day"
+        day_type_label = "上学日（自动判断）" if weekday < 5 else "休息日（自动判断）"
+    elif day_type == "school_day":
+        day_type_label = "上学日（今天单独设置）"
+    else:
+        day_type_label = "休息日（今天单独设置）"
+
+    suffix = "weekday" if day_type == "school_day" else "rest_day"
+    first_time = settings["first_briefing_{}_time".format(suffix)]
+    second_mode = preferences["second_reminder_mode"]
+    if second_mode == "disabled":
+        second_label = "今天不进行第二次提醒"
+    elif second_mode == "custom":
+        second_label = "{}（今天单独设置）".format(
+            preferences["second_reminder_time"]
+        )
+    else:
+        second_label = "{}（使用长期设置）".format(
+            settings["second_reminder_{}_time".format(suffix)]
+        )
+
+    return {
+        "day_type": day_type_label,
+        "first_briefing": first_time,
+        "second_reminder": second_label,
+        "homework_reminders": (
+            "开启" if preferences["homework_reminders_enabled"] else "关闭"
+        ),
+        "posture_reminders": (
+            "开启" if preferences["posture_reminders_enabled"] else "关闭"
+        ),
+    }
 
 
 def _form_optional(value) -> Optional[str]:

@@ -1,22 +1,9 @@
-{% extends "base.html" %}
+{% extends "app_shell.html" %}
 {% block title %}动作基准录入 · FunWithCam{% endblock %}
-{% block body %}
-<header class="topbar">
-  <div>
-    <a class="wordmark" href="/">FunWithCam</a>
-    <span class="privacy-label">动作基准录入</span>
-  </div>
-  <div class="topbar-actions">
-    <a class="button button-quiet" href="/">返回今日安排</a>
-    <form method="post" action="/logout">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button class="button button-quiet" type="submit">退出</button>
-    </form>
-  </div>
-</header>
-
-<main class="calibration-shell">
+{% block shell_class %}calibration-shell{% endblock %}
+{% block app_content %}
   <header class="calibration-heading">
+    <a class="back-link" href="/settings">← 返回设置</a>
     <p class="eyebrow">一次录入，后续长期使用</p>
     <h1>录入孩子的动作基准</h1>
     <p>每一步会采集约 10 秒，从多帧画面计算正常范围。家长确认图片后，基准才会生效。</p>
@@ -221,8 +208,6 @@
       </section>
     {% endif %}
   {% endif %}
-</main>
-
 {% if draft and draft.status == 'capturing' %}
   <script>
     window.setTimeout(function () { window.location.reload(); }, 1800);

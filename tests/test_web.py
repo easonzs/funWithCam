@@ -150,7 +150,10 @@ class WebAppTest(unittest.TestCase):
                     follow_redirects=False,
                 )
                 self.assertEqual(303, added.status_code)
-                self.assertIn("数学练习册", client.get("/").text)
+                self.assertTrue(
+                    added.headers["location"].startswith("/schedule?")
+                )
+                self.assertIn("数学练习册", client.get("/schedule").text)
 
                 settings = client.post(
                     "/settings",
@@ -165,7 +168,114 @@ class WebAppTest(unittest.TestCase):
                     follow_redirects=False,
                 )
                 self.assertEqual(303, settings.status_code)
-                self.assertIn('value="小明"', client.get("/").text)
+                self.assertTrue(
+                    settings.headers["location"].startswith("/settings?")
+                )
+                self.assertIn('value="小明"', client.get("/settings").text)
+                self.assertNotIn('name="child_name"', client.get("/").text)
+
+    def test_page_structure_routes_forms_and_navigation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            database = Database(database_path)
+            database.initialize()
+            AuthRepository(database).set_password(
+                "parent",
+                "long-password",
+                datetime.now(timezone.utc),
+            )
+            app = create_app(
+                PROJECT_ROOT / "config" / "config.example.yaml",
+                database_path,
+                precheck_runner=_passed_precheck,
+            )
+
+            with TestClient(app) as client:
+                protected_paths = (
+                    "/",
+                    "/schedule",
+                    "/records",
+                    "/settings",
+                    "/schedule/new",
+                    "/courses/new",
+                    "/today/settings",
+                    "/calibration",
+                )
+                for path in protected_paths:
+                    unauthorized = client.get(path, follow_redirects=False)
+                    self.assertEqual(303, unauthorized.status_code, path)
+                    self.assertEqual("/login", unauthorized.headers["location"])
+
+                client.post(
+                    "/login",
+                    data={"username": "parent", "password": "long-password"},
+                )
+
+                for path in protected_paths:
+                    page = client.get(path)
+                    self.assertEqual(200, page.status_code, path)
+                    self.assertIn('class="desktop-nav"', page.text)
+                    self.assertIn('class="mobile-nav"', page.text)
+
+                dashboard = client.get("/")
+                self.assertIn('href="/" aria-current="page"', dashboard.text)
+                self.assertNotIn('name="child_name"', dashboard.text)
+                self.assertNotIn('action="/courses"', dashboard.text)
+                self.assertNotIn('action="/today/preferences"', dashboard.text)
+
+                schedule = client.get("/schedule")
+                self.assertIn(
+                    'href="/schedule" aria-current="page"',
+                    schedule.text,
+                )
+                self.assertNotIn('action="/today/items"', schedule.text)
+                self.assertNotIn('action="/courses"', schedule.text)
+
+                records = client.get("/records")
+                self.assertIn(
+                    'href="/records" aria-current="page"',
+                    records.text,
+                )
+
+                settings = client.get("/settings")
+                self.assertIn(
+                    'href="/settings" aria-current="page"',
+                    settings.text,
+                )
+                self.assertIn('name="child_name"', settings.text)
+
+                agenda_form = client.get("/schedule/new")
+                self.assertIn('action="/today/items"', agenda_form.text)
+                course_form = client.get("/courses/new")
+                self.assertIn('action="/courses"', course_form.text)
+                today_settings = client.get("/today/settings")
+                self.assertIn(
+                    'action="/today/preferences"',
+                    today_settings.text,
+                )
+
+                csrf = re.search(
+                    r'name="csrf" value="([^"]+)"',
+                    dashboard.text,
+                ).group(1)
+                course = client.post(
+                    "/courses",
+                    data={
+                        "csrf": csrf,
+                        "name": "英语课",
+                        "weekday": "1",
+                        "start_time": "19:00",
+                        "delivery_type": "online",
+                        "preparation_minutes": "10",
+                        "travel_minutes": "0",
+                    },
+                    follow_redirects=False,
+                )
+                self.assertTrue(
+                    course.headers["location"].startswith(
+                        "/schedule?tab=courses&message="
+                    )
+                )
 
     def test_rejects_post_without_csrf(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block body %}
+<a class="skip-link" href="#main-content">跳到主要内容</a>
+<header class="app-header">
+  <div class="header-inner">
+    <div class="brand-group">
+      <a class="wordmark" href="/">FunWithCam</a>
+      <span class="privacy-label">家庭本地服务</span>
+    </div>
+    <nav class="desktop-nav" aria-label="主要导航">
+      <a href="/" {% if active_nav == 'today' %}aria-current="page"{% endif %}>今日</a>
+      <a href="/schedule" {% if active_nav == 'schedule' %}aria-current="page"{% endif %}>日程</a>
+      <a href="/records" {% if active_nav == 'records' %}aria-current="page"{% endif %}>记录</a>
+      <a href="/settings" {% if active_nav == 'settings' %}aria-current="page"{% endif %}>设置</a>
+    </nav>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button button-quiet header-logout" type="submit">退出</button>
+    </form>
+  </div>
+</header>
+
+<main id="main-content" class="{% block shell_class %}page-shell{% endblock %}">
+  {% block app_content %}{% endblock %}
+</main>
+
+<nav class="mobile-nav" aria-label="主要导航">
+  <a href="/" {% if active_nav == 'today' %}aria-current="page"{% endif %}>今日</a>
+  <a href="/schedule" {% if active_nav == 'schedule' %}aria-current="page"{% endif %}>日程</a>
+  <a href="/records" {% if active_nav == 'records' %}aria-current="page"{% endif %}>记录</a>
+  <a href="/settings" {% if active_nav == 'settings' %}aria-current="page"{% endif %}>设置</a>
+</nav>
+{% endblock %}
