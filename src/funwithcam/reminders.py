@@ -49,6 +49,7 @@ def build_briefing_message(
     weekly_courses: Sequence[dict],
     plan: ReminderPlan,
     now: datetime,
+    child_name: str,
 ) -> str:
     parts = []
     courses = [
@@ -106,12 +107,13 @@ def build_briefing_message(
         )
     elif plan.day_type == "rest_day":
         parts.append("今天按休息日安排，不用着急开始。")
-    return "".join(parts)
+    return "{}，{}".format(child_name, "".join(parts))
 
 
 def build_second_reminder_message(
     items: Sequence[dict],
     scheduled_at: datetime,
+    child_name: str,
 ) -> str:
     homework = [
         item["title"]
@@ -120,10 +122,12 @@ def build_second_reminder_message(
     ]
     prefix = "现在是{}。".format(_spoken_time(scheduled_at.strftime("%H:%M")))
     if homework:
-        return prefix + "今天还有{}，可以开始准备了。".format(
+        message = prefix + "今天还有{}，可以开始准备了。".format(
             _summarize_names(homework, "项作业")
         )
-    return prefix + "可以看一下今天还没有完成的安排。"
+    else:
+        message = prefix + "可以看一下今天还没有完成的安排。"
+    return "{}，{}".format(child_name, message)
 
 
 def _at_time(target_date: date, value: str, timezone: ZoneInfo) -> datetime:

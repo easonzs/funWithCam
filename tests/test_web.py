@@ -63,6 +63,21 @@ class WebAppTest(unittest.TestCase):
                 self.assertEqual(303, added.status_code)
                 self.assertIn("数学练习册", client.get("/").text)
 
+                settings = client.post(
+                    "/settings",
+                    data={
+                        "csrf": csrf,
+                        "child_name": "小明",
+                        "first_briefing_weekday_time": "17:00",
+                        "first_briefing_rest_day_time": "09:00",
+                        "second_reminder_weekday_time": "18:10",
+                        "second_reminder_rest_day_time": "09:30",
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(303, settings.status_code)
+                self.assertIn('value="小明"', client.get("/").text)
+
     def test_rejects_post_without_csrf(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "test.db"

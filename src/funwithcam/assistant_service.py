@@ -108,11 +108,12 @@ def run_assistant(
                 stop_event.wait(0.1)
                 continue
 
+            settings = family.get_settings()
             plan = build_reminder_plan(
                 now.date(),
                 timezone,
                 family.get_daily_preferences(now.date()),
-                family.get_settings(),
+                settings,
             )
             if now < plan.first_briefing_at or now_monotonic < identity_suppressed_until:
                 stop_event.wait(0.1)
@@ -170,7 +171,13 @@ def run_assistant(
 
             items = family.list_agenda(now.date())
             courses = family.list_courses_for_date(now.date())
-            message = build_briefing_message(items, courses, plan, now)
+            message = build_briefing_message(
+                items,
+                courses,
+                plan,
+                now,
+                settings["child_name"],
+            )
             audio.speak(message)
             reminders.mark_briefed(
                 now.date().isoformat(),
@@ -196,11 +203,12 @@ def _process_second_reminder(
     status = reminders.get_daily_status(now.date().isoformat())
     if status["briefed_at"] is None or status["second_reminder_at"] is not None:
         return
+    settings = family.get_settings()
     plan = build_reminder_plan(
         now.date(),
         timezone,
         family.get_daily_preferences(now.date()),
-        family.get_settings(),
+        settings,
     )
     if plan.second_reminder_at is None or now < plan.second_reminder_at:
         return
@@ -222,6 +230,7 @@ def _process_second_reminder(
     message = build_second_reminder_message(
         family.list_agenda(now.date()),
         plan.second_reminder_at,
+        settings["child_name"],
     )
     audio.speak(message)
     reminders.mark_second_reminder(

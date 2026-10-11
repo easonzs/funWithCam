@@ -68,7 +68,7 @@ class DatabaseTest(unittest.TestCase):
                 count = connection.execute(
                     "SELECT COUNT(*) FROM schema_migrations"
                 ).fetchone()[0]
-            self.assertEqual(3, count)
+        self.assertEqual(4, count)
 
 
 if __name__ == "__main__":

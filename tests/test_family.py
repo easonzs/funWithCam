@@ -91,6 +91,22 @@ class FamilyRepositoryTest(unittest.TestCase):
 
         self.assertEqual("17:00", settings["first_briefing_weekday_time"])
         self.assertEqual("18:10", settings["second_reminder_weekday_time"])
+        self.assertEqual("小朋友", settings["child_name"])
+
+    def test_child_name_can_be_updated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "test.db")
+            database.initialize()
+            repository = FamilyRepository(database)
+
+            repository.save_settings(
+                {"child_name": " 小明 "},
+                datetime(2026, 10, 11, 10, 0, tzinfo=timezone.utc),
+            )
+
+            settings = repository.get_settings()
+
+        self.assertEqual("小明", settings["child_name"])
 
 
 if __name__ == "__main__":

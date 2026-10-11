@@ -88,8 +88,10 @@ class ReminderPlanTest(unittest.TestCase):
             ],
             plan,
             datetime(2026, 10, 12, 17, 0, tzinfo=TIMEZONE),
+            "小明",
         )
 
+        self.assertTrue(message.startswith("小明，"))
         self.assertIn("19点有英语课", message)
         self.assertIn("数学练习册", message)
         self.assertIn("18点10分再提醒你", message)
@@ -104,10 +106,11 @@ class ReminderPlanTest(unittest.TestCase):
                 }
             ],
             datetime(2026, 10, 12, 18, 10, tzinfo=TIMEZONE),
+            "小明",
         )
 
         self.assertEqual(
-            "现在是18点10分。今天还有语文背诵，可以开始准备了。",
+            "小明，现在是18点10分。今天还有语文背诵，可以开始准备了。",
             message,
         )
 

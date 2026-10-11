@@ -5,6 +5,7 @@ from .database import Database
 
 
 DEFAULT_SETTINGS = {
+    "child_name": "小朋友",
     "first_briefing_weekday_time": "17:00",
     "first_briefing_rest_day_time": "09:00",
     "second_reminder_weekday_time": "18:10",
@@ -287,6 +288,11 @@ class FamilyRepository:
         unknown = set(values) - set(DEFAULT_SETTINGS)
         if unknown:
             raise ValueError("unknown family settings: {}".format(sorted(unknown)))
+        values = dict(values)
+        if "child_name" in values:
+            values["child_name"] = values["child_name"].strip()
+            if not values["child_name"]:
+                raise ValueError("child name cannot be empty")
         for key, value in values.items():
             if key.endswith("_time"):
                 _validate_time(value)

@@ -245,12 +245,16 @@
   <section class="section-block" id="defaults">
     <div class="section-heading">
       <div>
-        <h2>默认提醒时间</h2>
+        <h2>默认提醒设置</h2>
         <p>今天单独设置后，只覆盖当天，不修改这里的长期默认值。</p>
       </div>
     </div>
     <form method="post" action="/settings" class="form-grid form-surface">
       <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="span-2">
+        <span>孩子名字或称呼</span>
+        <input type="text" name="child_name" value="{{ settings.child_name }}" required>
+      </label>
       <label>
         <span>上学日首次简报</span>
         <input type="time" name="first_briefing_weekday_time" value="{{ settings.first_briefing_weekday_time }}" required>

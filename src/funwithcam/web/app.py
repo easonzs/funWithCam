@@ -286,6 +286,7 @@ def create_app(
         try:
             family.save_settings(
                 {
+                    "child_name": str(form.get("child_name", "")),
                     "first_briefing_weekday_time": str(
                         form.get("first_briefing_weekday_time", "")
                     ),
@@ -303,7 +304,7 @@ def create_app(
             )
         except ValueError as exc:
             return _redirect("/", error=str(exc))
-        return _redirect("/", message="默认提醒时间已保存")
+        return _redirect("/", message="默认提醒设置已保存")
 
     return app
 
