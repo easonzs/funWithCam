@@ -40,9 +40,16 @@ alexxit/go2rtc:1.9.14
 仓库中的 `.github/workflows/publish-image.yml` 会在 `main` 分支相关代码更新或
 推送 `v*` 标签时构建 `linux/arm64` 和 `linux/amd64` 两种架构。
 
-首次发布后还需在 GitHub 的 Package settings 中把
-`ghcr.io/easonzs/funwithcam` 设置为 Public。若保持 Private，新 Mac 必须先
-执行 `docker login ghcr.io`，这不符合默认的傻瓜式部署目标。
+首次发布后的可见性有两种选择：
+
+- **Public**：新 Mac 可以匿名拉取，最符合傻瓜式部署；但任何人也可以下载
+  镜像并查看其中的应用代码和模型。
+- **Private**：不公开镜像；新 Mac 首次部署前需要先执行
+  `docker login ghcr.io`。
+
+无论选择哪种方式，镜像都不包含家庭 SQLite、摄像头 Token、人脸资料或
+`.env`，这些内容只存在于部署电脑的 `runtime/`。不要在未确认代码公开范围
+前直接把 Package 改为 Public。
 
 在 GitHub Actions 首次成功、Package 可见性配置完成之前，这个地址只是预定
 地址，不能认为镜像已经可下载。
