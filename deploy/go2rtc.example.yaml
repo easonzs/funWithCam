@@ -1,0 +1,12 @@
+# 首次部署后打开 http://127.0.0.1:1984，选择 Add -> Xiaomi。
+# 完成小米登录并选择摄像头后，请将视频流命名为 study_room。
+# go2rtc 会把生成的设备 Token 和视频流写入此文件；该文件不会提交到 Git。
+
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
+
+log:
+  level: info

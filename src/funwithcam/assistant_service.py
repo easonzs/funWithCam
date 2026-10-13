@@ -21,10 +21,15 @@ from .reminders import (
     build_reminder_plan,
     build_second_reminder_message,
 )
+from .study_monitor import StudyMonitor
 from .storage.activity_repository import ActivityRepository
+from .storage.calibration_repository import CalibrationRepository
 from .storage.database import Database
 from .storage.family_repository import FamilyRepository
+from .storage.observation_repository import ObservationRepository
 from .storage.reminder_repository import ReminderRepository
+from .storage.speech_template_repository import SpeechTemplateRepository
+from .storage.study_session_repository import StudySessionRepository
 from .video import LatestFrameCapture
 from .vision import PosePresenceDetector
 
@@ -33,16 +38,20 @@ LOGGER = logging.getLogger(__name__)
 SECOND_REMINDER_GRACE = timedelta(minutes=30)
 
 
+class FormalIdentityMissingError(RuntimeError):
+    pass
+
+
 def validate_formal_identities(database_path: Path) -> None:
     database = Database(database_path)
     database.initialize()
     templates = FaceProfileRepository(database).list_active("formal")
     if not any(template.role == "child" for template in templates):
-        raise RuntimeError(
+        raise FormalIdentityMissingError(
             "formal child identity is missing; run face-enroll --profile formal"
         )
     if not any(template.role == "parent" for template in templates):
-        raise RuntimeError(
+        raise FormalIdentityMissingError(
             "formal parent identity is missing; enroll at least one parent"
         )
 
@@ -61,8 +70,12 @@ def run_assistant(
     database = Database(database_path)
     database.initialize()
     activities = ActivityRepository(database)
+    calibrations = CalibrationRepository(database)
     family = FamilyRepository(database)
+    observations = ObservationRepository(database)
     reminders = ReminderRepository(database)
+    speech_templates = SpeechTemplateRepository(database)
+    study_sessions = StudySessionRepository(database)
     validate_formal_identities(database_path)
     templates = FaceProfileRepository(database).list_active("formal")
     if stop_event is None:
@@ -85,6 +98,15 @@ def run_assistant(
     presence = PresenceMonitor(config.study_area, config.person, config.presence)
     capture = None
     audio = AudioOutput(config.audio.command)
+    study_monitor = StudyMonitor(
+        config,
+        activities,
+        calibrations,
+        observations,
+        study_sessions,
+        speech_templates,
+        audio,
+    )
     interval = 1.0 / config.video.inference_fps
     last_inference_at = 0.0
     last_schedule_check = 0.0
@@ -97,6 +119,7 @@ def run_assistant(
     try:
         while not stop_event.is_set():
             if calibration_active():
+                study_monitor.deactivate()
                 if capture is not None:
                     capture.close()
                     capture = None
@@ -134,10 +157,41 @@ def run_assistant(
                     reminders,
                     activities,
                     audio,
+                    speech_templates,
                     timezone,
                 )
 
             status = reminders.get_daily_status(now.date().isoformat())
+            if status["workflow_state"] == "STUDYING":
+                settings = family.get_settings()
+                session = study_sessions.get_latest(now.date().isoformat())
+                if (
+                    session is not None
+                    and study_monitor.is_due(
+                        now_monotonic,
+                        int(settings["observation_interval_seconds"]),
+                    )
+                ):
+                    latest = capture.get_latest(
+                        config.video.max_frame_age_seconds
+                    )
+                    if latest is not None:
+                        study_monitor.observe(
+                            latest.frame,
+                            now,
+                            now_monotonic,
+                            session,
+                            settings,
+                            bool(
+                                family.get_daily_preferences(
+                                    now.date()
+                                )["posture_reminders_enabled"]
+                            ),
+                        )
+                stop_event.wait(0.1)
+                continue
+            study_monitor.deactivate()
+
             briefing_is_complete = status["briefed_at"] is not None
             if briefing_was_complete and not briefing_is_complete:
                 presence.reset()
@@ -230,6 +284,9 @@ def run_assistant(
                 plan,
                 now,
                 settings["child_name"],
+                _enabled_template_text(
+                    speech_templates.get("first_briefing")
+                ),
             )
             audio.speak(message)
             reminders.mark_briefed(
@@ -252,6 +309,7 @@ def run_assistant(
         LOGGER.info("assistant service stopped")
     finally:
         set_assistant_running(False)
+        study_monitor.deactivate()
         if pose is not None:
             pose.close()
         if capture is not None:
@@ -264,6 +322,7 @@ def _process_second_reminder(
     reminders: ReminderRepository,
     activities: ActivityRepository,
     audio: AudioOutput,
+    speech_templates: SpeechTemplateRepository,
     timezone: ZoneInfo,
 ) -> None:
     status = reminders.get_daily_status(now.date().isoformat())
@@ -311,6 +370,9 @@ def _process_second_reminder(
         family.list_agenda(now.date()),
         plan.second_reminder_at,
         settings["child_name"],
+        _enabled_template_text(
+            speech_templates.get("second_reminder")
+        ),
     )
     audio.speak(message)
     reminders.mark_second_reminder(
@@ -338,3 +400,9 @@ def _new_verifier(config) -> MultiFrameVerifier:
         config.identity.confirmation_frames,
         config.identity.confirmation_window_seconds,
     )
+
+
+def _enabled_template_text(template: dict | None) -> str | None:
+    if template is None or not template["enabled"]:
+        return None
+    return template["template_text"]

@@ -50,7 +50,24 @@ def build_briefing_message(
     plan: ReminderPlan,
     now: datetime,
     child_name: str,
+    template: Optional[str] = None,
 ) -> str:
+    schedule_summary = build_schedule_summary(items, weekly_courses)
+    next_reminder = (
+        _spoken_time(plan.second_reminder_at.strftime("%H:%M"))
+        if plan.second_reminder_at is not None and plan.second_reminder_at > now
+        else "今天不再安排第二次提醒"
+    )
+    if template is not None:
+        return render_speech_template(
+            template,
+            {
+                "孩子称呼": child_name,
+                "今天安排简报": schedule_summary,
+                "下一次提醒时间": next_reminder,
+            },
+        )
+
     parts = []
     courses = [
         {
@@ -114,7 +131,18 @@ def build_second_reminder_message(
     items: Sequence[dict],
     scheduled_at: datetime,
     child_name: str,
+    template: Optional[str] = None,
 ) -> str:
+    pending_tasks = build_pending_task_list(items)
+    if template is not None:
+        return render_speech_template(
+            template,
+            {
+                "孩子称呼": child_name,
+                "当前时间": _spoken_time(scheduled_at.strftime("%H:%M")),
+                "待完成任务列表": pending_tasks,
+            },
+        )
     homework = [
         item["title"]
         for item in items
@@ -128,6 +156,76 @@ def build_second_reminder_message(
     else:
         message = prefix + "可以看一下今天还没有完成的安排。"
     return "{}，{}".format(child_name, message)
+
+
+def build_schedule_summary(
+    items: Sequence[dict],
+    weekly_courses: Sequence[dict],
+) -> str:
+    parts = []
+    courses = [
+        {
+            "title": item["title"],
+            "scheduled_time": item["scheduled_time"],
+            "preparation_minutes": item["preparation_minutes"],
+        }
+        for item in items
+        if item["item_type"] == "course" and item["status"] == "pending"
+    ]
+    courses.extend(
+        {
+            "title": course["name"],
+            "scheduled_time": course["start_time"],
+            "preparation_minutes": course["preparation_minutes"],
+        }
+        for course in weekly_courses
+    )
+    courses.sort(key=lambda item: item["scheduled_time"] or "99:99")
+    if courses:
+        first = courses[0]
+        text = "今天{}有{}".format(
+            _spoken_time(first["scheduled_time"]),
+            first["title"],
+        )
+        if first["preparation_minutes"]:
+            text += "，需要提前{}分钟准备".format(
+                first["preparation_minutes"]
+            )
+        parts.append(text + "。")
+
+    homework = [
+        item["title"]
+        for item in items
+        if item["item_type"] == "homework" and item["status"] == "pending"
+    ]
+    if homework:
+        parts.append("今天有{}。".format(_summarize_names(homework, "项作业")))
+
+    temporary = [
+        item["title"]
+        for item in items
+        if item["item_type"] == "temporary" and item["status"] == "pending"
+    ]
+    if temporary:
+        parts.append("另外还有{}。".format(_summarize_names(temporary, "项安排")))
+
+    return "".join(parts) if parts else "今天还没有录入作业或课程。"
+
+
+def build_pending_task_list(items: Sequence[dict]) -> str:
+    names = [
+        item["title"]
+        for item in items
+        if item["item_type"] != "course" and item["status"] == "pending"
+    ]
+    return _summarize_names(names, "项任务") if names else "需要完成的安排"
+
+
+def render_speech_template(template: str, variables: dict[str, str]) -> str:
+    rendered = template
+    for name, value in variables.items():
+        rendered = rendered.replace("{" + name + "}", value)
+    return rendered
 
 
 def _at_time(target_date: date, value: str, timezone: ZoneInfo) -> datetime:

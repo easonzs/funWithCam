@@ -1,0 +1,129 @@
+{% extends "app_shell.html" %}
+{% block title %}语音口令 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>语音口令</h1>
+    <p class="page-description">配置明确说法、关键词组合和二次确认。保存后立即生效，不需要重启服务。</p>
+  </div>
+</header>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="settings-section">
+  <div class="section-heading">
+    <div>
+      <h2>当前状态</h2>
+      <p>输入来源：{{ input_source }}。执行历史用于确认监听线程是否真正识别到语音。</p>
+    </div>
+    <span class="status-chip {% if speech_enabled %}is-ready{% else %}is-unavailable{% endif %}">
+      {% if speech_enabled %}已配置开启{% else %}未开启{% endif %}
+    </span>
+  </div>
+  <p>匹配顺序：完整短语 → 关键词组合 → 无匹配。组合匹配默认需要二次确认，避免短词误触发。</p>
+</section>
+
+<section aria-labelledby="speech-command-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="speech-command-title">可用语音口令</h2>
+      <p>默认口令固定保留；你可以在每项下面追加家庭习惯说法。</p>
+    </div>
+  </div>
+  <div class="keyword-example" aria-label="关键词组合示例">
+    <strong>关键词组合怎么写？</strong>
+    <p>每行代表一组“任选一个”的词，识别文本必须在每一行都至少命中一个词。</p>
+    <div class="keyword-example-grid">
+      <code>开始,准备,要</code>
+      <code>学习,作业,记录</code>
+      <span>“我要做作业”命中第一行的“要”和第二行的“作业”，因此会进入二次确认。</span>
+    </div>
+  </div>
+<div class="speech-command-list">
+  {% for item in speech_commands %}
+    <form method="post" action="/speech/{{ item.command }}" class="speech-command-row speech-command-editor" data-speech-command="{{ item.command }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="speech-command-name">
+        <h2>{{ item.label }}</h2>
+        <p>{{ item.description }}</p>
+        {% if item.command == 'finish_checkin' %}
+          <span class="context-note">仅在视频正在录制时参与匹配</span>
+        {% endif %}
+        {% if item.command == 'finish_checkin' %}
+          <input type="hidden" name="enabled" value="on">
+          <span class="required-intent-state">必要口令 · 始终启用</span>
+        {% else %}
+          <label class="compact-check">
+            <input type="checkbox" name="enabled" {% if item.enabled %}checked{% endif %}>
+            <span>启用</span>
+          </label>
+        {% endif %}
+      </div>
+      <div class="intent-fields">
+        <div class="phrase-group">
+          <span class="field-label">系统默认口令</span>
+          <div class="phrase-tags phrase-tags-default">
+            {% for phrase in item.default_phrases %}<span>{{ phrase }}</span>{% endfor %}
+          </div>
+          <small>默认口令始终生效，不能删除。</small>
+        </div>
+        <label>
+          <span>自定义追加口令，每行一个</span>
+          <textarea name="custom_phrases" rows="3" placeholder="例如：现在开始">{% for phrase in item.custom_phrases %}{{ phrase }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
+          {% if item.custom_phrases %}
+          <span class="custom-phrase-preview">
+            已追加：
+            {% for phrase in item.custom_phrases %}<strong>{{ phrase }}</strong>{% endfor %}
+          </span>
+          {% else %}
+          <small>可留空。保存后会追加在默认口令后面，并用蓝绿色标识。</small>
+          {% endif %}
+        </label>
+        <label>
+          <span>关键词组合，每行一组、组内用逗号分隔</span>
+          <textarea name="keyword_groups" rows="3">{% for group in item.keyword_groups %}{{ group|join(',') }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
+          <small>每一行至少命中一个词，所有行都命中才算组合匹配。</small>
+        </label>
+        {% if item.command == 'finish_checkin' %}
+          <input type="hidden" name="confirmation_mode" value="never">
+          <input type="hidden" name="confirmation_prompt" value="">
+          <input type="hidden" name="confirm_phrases" value="">
+          <input type="hidden" name="cancel_phrases" value="">
+          <div class="intent-context-explainer">
+            <strong>执行方式</strong>
+            <p>录制中命中完整短语或关键词组合后，系统立即停止并保存视频。为了避免漏掉结尾，不再增加二次确认。</p>
+          </div>
+        {% else %}
+          <label>
+            <span>二次确认策略</span>
+            <select name="confirmation_mode">
+              <option value="never" {% if item.confirmation_mode == 'never' %}selected{% endif %}>不确认</option>
+              <option value="ambiguous" {% if item.confirmation_mode == 'ambiguous' %}selected{% endif %}>仅组合匹配时确认</option>
+              <option value="always" {% if item.confirmation_mode == 'always' %}selected{% endif %}>始终确认</option>
+            </select>
+          </label>
+          <label>
+            <span>确认话术</span>
+            <input name="confirmation_prompt" value="{{ item.confirmation_prompt }}">
+          </label>
+          <label>
+            <span>确认回复，每行一个</span>
+            <textarea name="confirm_phrases" rows="2">{% for phrase in item.confirm_phrases %}{{ phrase }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
+          </label>
+          <label>
+            <span>取消回复，每行一个</span>
+            <textarea name="cancel_phrases" rows="2">{% for phrase in item.cancel_phrases %}{{ phrase }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
+          </label>
+        {% endif %}
+        <button class="button button-primary" type="submit">保存 {{ item.label }}</button>
+      </div>
+    </form>
+  {% endfor %}
+</div>
+</section>
+{% endblock %}

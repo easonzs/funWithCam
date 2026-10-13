@@ -21,6 +21,18 @@ class AuthRepository:
     def __init__(self, database: Database):
         self._database = database
 
+    def has_user(self, username: str) -> bool:
+        with self._database.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT 1
+                FROM admin_users
+                WHERE username = ?
+                """,
+                (username.strip(),),
+            ).fetchone()
+        return row is not None
+
     def set_password(
         self,
         username: str,

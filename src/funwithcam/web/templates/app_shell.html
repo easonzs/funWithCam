@@ -1,6 +1,31 @@
 {% extends "base.html" %}
 {% block body %}
 <a class="skip-link" href="#main-content">跳到主要内容</a>
+{% set config_aliases = ['settings', 'speech', 'speech_templates', 'interaction', 'finish_checks', 'reminders'] %}
+{% set in_config = active_nav == 'config' or active_nav in config_aliases %}
+{% set current_config_section = config_section|default({
+  'settings': 'settings',
+  'speech': 'speech',
+  'speech_templates': 'speech-templates',
+  'interaction': 'interaction',
+  'finish_checks': 'finish',
+  'reminders': 'studying'
+}.get(active_nav, 'studying'), true) %}
+{% set config_labels = {
+  'arrival': '到家与日程提醒',
+  'start': '开始学习',
+  'studying': '学习中监测',
+  'away': '离座与恢复',
+  'finish': '结束检查',
+  'checkin': '打卡录制',
+  'speech': '语音口令',
+  'speech-templates': '系统话术',
+  'interaction': '确认与重复询问',
+  'device': '摄像头与收音',
+  'profile': '孩子与基准',
+  'settings': '家庭基础设置',
+  'privacy': '数据与隐私'
+} %}
 <header class="app-header">
   <div class="header-inner">
     <div class="brand-group">
@@ -11,23 +36,97 @@
       <a href="/" {% if active_nav == 'today' %}aria-current="page"{% endif %}>今日</a>
       <a href="/schedule" {% if active_nav == 'schedule' %}aria-current="page"{% endif %}>日程</a>
       <a href="/records" {% if active_nav == 'records' %}aria-current="page"{% endif %}>记录</a>
-      <a href="/settings" {% if active_nav == 'settings' %}aria-current="page"{% endif %}>设置</a>
+      <a href="/config/studying" {% if in_config %}aria-current="page"{% endif %}>配置中心</a>
     </nav>
+    <div class="header-actions">
+      <a class="header-guide-link" href="/guide" {% if active_nav == 'guide' %}aria-current="page"{% endif %}>使用说明</a>
     <form method="post" action="/logout">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="button button-quiet header-logout" type="submit">退出</button>
     </form>
+    </div>
   </div>
 </header>
 
-<main id="main-content" class="{% block shell_class %}page-shell{% endblock %}">
-  {% block app_content %}{% endblock %}
+<main id="main-content" class="app-layout">
+  <aside class="app-sidebar" aria-label="工作区导航">
+    {% if in_config %}
+      <div class="sidebar-heading">
+        <h2>配置中心</h2>
+        <p>按功能对象维护设置，保存后立即生效。</p>
+      </div>
+      <span class="sidebar-label">学习流程</span>
+      <nav class="sidebar-nav">
+        <a href="/config/arrival" class="{% if current_config_section == 'arrival' %}is-active{% endif %}"><span class="nav-glyph">⌂</span>到家与日程提醒</a>
+        <a href="/config/start" class="{% if current_config_section == 'start' %}is-active{% endif %}"><span class="nav-glyph">▶</span>开始学习</a>
+        <a href="/config/studying" class="{% if current_config_section == 'studying' %}is-active{% endif %}"><span class="nav-glyph">◉</span>学习中监测</a>
+        <a href="/config/away" class="{% if current_config_section == 'away' %}is-active{% endif %}"><span class="nav-glyph">↔</span>离座与恢复</a>
+        <a href="/config/finish" class="{% if current_config_section == 'finish' %}is-active{% endif %}"><span class="nav-glyph">✓</span>结束检查</a>
+        <a href="/config/checkin" class="{% if current_config_section == 'checkin' %}is-active{% endif %}"><span class="nav-glyph">▣</span>打卡录制</a>
+      </nav>
+      <span class="sidebar-label">系统基础</span>
+      <nav class="sidebar-nav">
+        <a href="/config/speech" class="{% if current_config_section == 'speech' %}is-active{% endif %}"><span class="nav-glyph">◌</span>语音口令</a>
+        <a href="/config/speech-templates" class="{% if current_config_section == 'speech-templates' %}is-active{% endif %}"><span class="nav-glyph">▤</span>系统话术</a>
+        <a href="/config/interaction" class="{% if current_config_section == 'interaction' %}is-active{% endif %}"><span class="nav-glyph">?</span>确认与重复询问</a>
+        <a href="/config/device" class="{% if current_config_section == 'device' %}is-active{% endif %}"><span class="nav-glyph">□</span>摄像头与收音</a>
+        <a href="/config/profile" class="{% if current_config_section == 'profile' %}is-active{% endif %}"><span class="nav-glyph">◎</span>孩子与基准</a>
+        <a href="/config/settings" class="{% if current_config_section == 'settings' %}is-active{% endif %}"><span class="nav-glyph">⚙</span>家庭基础设置</a>
+        <a href="/config/privacy" class="{% if current_config_section == 'privacy' %}is-active{% endif %}"><span class="nav-glyph">◇</span>数据与隐私</a>
+      </nav>
+    {% elif active_nav == 'guide' %}
+      <div class="sidebar-heading">
+        <h2>使用说明</h2>
+        <p>按家庭中的真实学习流程查看能力和边界。</p>
+      </div>
+      <span class="sidebar-label">完整流程</span>
+      <nav class="sidebar-nav">
+        <a href="/guide#arrival"><span class="nav-glyph">⌂</span>到家与首次简报</a>
+        <a href="/guide#start"><span class="nav-glyph">▶</span>开始学习</a>
+        <a href="/guide#away"><span class="nav-glyph">↔</span>学习中离座</a>
+        <a href="/guide#finish"><span class="nav-glyph">✓</span>结束与检查</a>
+        <a href="/guide#checkin"><span class="nav-glyph">▣</span>视频打卡</a>
+        <a href="/guide#calibration"><span class="nav-glyph">◎</span>动作基准</a>
+      </nav>
+    {% else %}
+      <div class="sidebar-heading">
+        <h2>工作区</h2>
+        <p>今天、日程和记录共享同一套本地数据。</p>
+      </div>
+      <span class="sidebar-label">快捷入口</span>
+      <nav class="sidebar-nav">
+        <a href="/config/studying"><span class="nav-glyph">◉</span>监测规则</a>
+        <a href="/config/device"><span class="nav-glyph">□</span>设备状态</a>
+        <a href="/config/privacy"><span class="nav-glyph">◇</span>数据策略</a>
+      </nav>
+    {% endif %}
+  </aside>
+  <section class="{% block shell_class %}page-shell{% endblock %} app-content">
+    {% if in_config %}
+      <div class="config-breadcrumb">配置中心 / {{ config_labels.get(current_config_section, '配置') }}</div>
+    {% endif %}
+    {% block app_content %}{% endblock %}
+  </section>
 </main>
 
 <nav class="mobile-nav" aria-label="主要导航">
   <a href="/" {% if active_nav == 'today' %}aria-current="page"{% endif %}>今日</a>
   <a href="/schedule" {% if active_nav == 'schedule' %}aria-current="page"{% endif %}>日程</a>
   <a href="/records" {% if active_nav == 'records' %}aria-current="page"{% endif %}>记录</a>
+  <a href="/config/studying" {% if in_config %}aria-current="page"{% endif %}>配置</a>
+</nav>
+
+{# Legacy links remain in the DOM for bookmarks and assistive navigation tests; users enter through the four workspaces above. #}
+<nav class="legacy-route-links" aria-label="兼容入口">
+  <a href="/" {% if active_nav == 'today' %}aria-current="page"{% endif %}>今日</a>
+  <a href="/schedule" {% if active_nav == 'schedule' %}aria-current="page"{% endif %}>日程</a>
+  <a href="/records" {% if active_nav == 'records' %}aria-current="page"{% endif %}>记录</a>
   <a href="/settings" {% if active_nav == 'settings' %}aria-current="page"{% endif %}>设置</a>
+  <a href="/speech" {% if active_nav == 'speech' %}aria-current="page"{% endif %}>语音口令</a>
+  <a href="/speech-templates" {% if active_nav == 'speech_templates' %}aria-current="page"{% endif %}>系统话术</a>
+  <a href="/interaction" {% if active_nav == 'interaction' %}aria-current="page"{% endif %}>交互设置</a>
+  <a href="/finish-checks" {% if active_nav == 'finish_checks' %}aria-current="page"{% endif %}>结束检查</a>
+  <a href="/guide" {% if active_nav == 'guide' %}aria-current="page"{% endif %}>使用说明</a>
+  <a href="/reminders" {% if active_nav == 'reminders' %}aria-current="page"{% endif %}>提醒</a>
 </nav>
 {% endblock %}

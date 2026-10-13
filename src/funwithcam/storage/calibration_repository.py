@@ -97,6 +97,25 @@ class CalibrationRepository:
         result["quality"] = json.loads(result.pop("quality_json"))
         return result
 
+    def get_version(self, version_id: Optional[int]) -> Optional[dict]:
+        if version_id is None:
+            return None
+        with self._database.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM calibration_versions
+                WHERE id = ?
+                """,
+                (version_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["calibration"] = json.loads(result.pop("calibration_json"))
+        result["quality"] = json.loads(result.pop("quality_json"))
+        return result
+
     def has_active_study_session(self) -> bool:
         with self._database.connection() as connection:
             return self._active_study_session(connection) is not None

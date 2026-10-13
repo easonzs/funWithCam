@@ -1,0 +1,104 @@
+{% extends "app_shell.html" %}
+{% block title %}{{ title }} · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>{{ title }}</h1>
+    <p class="page-description">{{ description }}</p>
+  </div>
+  {% if primary_link %}
+    <a class="button button-primary" href="{{ primary_link }}">{{ primary_label }}</a>
+  {% endif %}
+</header>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="config-scope-panel" aria-label="本页影响范围">
+  <div>
+    <span class="eyebrow">本页影响范围</span>
+    <p>{{ scope }}</p>
+  </div>
+  <span class="status-chip is-ready">{{ status }}</span>
+</section>
+
+{% if config_rows %}
+<section class="settings-section config-section" aria-labelledby="config-rows-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="config-rows-title">当前配置</h2>
+      <p>这里展示真实运行配置；需要调整时进入对应的唯一配置入口。</p>
+    </div>
+  </div>
+  <div class="config-row-list">
+    {% for row in config_rows %}
+      <article class="config-row">
+        <div>
+          <strong>{{ row[0] }}</strong>
+          <span>{{ row[1] }}</span>
+        </div>
+        <div>
+          <span>{{ row[2] }}</span>
+        </div>
+        <span class="status-chip {% if row[3] in ['已配置', '已启用', '已接入', '可用', '本地'] %}is-ready{% endif %}">{{ row[3] }}</span>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if source_rows %}
+<section class="settings-section config-section" aria-labelledby="source-rows-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="source-rows-title">内容从哪里来</h2>
+      <p>系统不会在话术页面重复录入这些内容，触发时会从这里读取最新数据。</p>
+    </div>
+  </div>
+  <div class="source-row-list">
+    {% for row in source_rows %}
+      <div class="source-row">
+        <strong>{{ row[0] }}</strong>
+        <span>{{ row[1] }}</span>
+        <code>{{ row[2] }}</code>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if task_types %}
+<section class="settings-section config-section" aria-labelledby="checkin-types-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="checkin-types-title">可用的任务与打卡类型</h2>
+      <p>每天是否询问由日程中的“结束时询问”决定；这里维护的是可复用模板。</p>
+    </div>
+    <a class="button" href="/config/finish">管理任务模板</a>
+  </div>
+  <div class="config-row-list">
+    {% for item in task_types %}
+      <article class="config-row">
+        <div>
+          <strong>{{ item.label }}</strong>
+          <span>{{ item.task_key }} · {% if item.category == 'checkin' %}打卡{% elif item.category == 'school_homework' %}学校作业{% else %}其他{% endif %}</span>
+        </div>
+        <div><span>{% if item.completion_mode == 'video' %}视频确认{% elif item.completion_mode == 'parent' %}家长确认{% else %}语音确认{% endif %}</span></div>
+        <span class="status-chip {% if item.enabled %}is-ready{% endif %}">{% if item.enabled %}日程中可选{% else %}已停用{% endif %}</span>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if links %}
+<section class="config-links" aria-label="相关配置">
+  <h2>下一步</h2>
+  <div class="config-link-list">
+    {% for href, label in links %}
+      <a class="config-link" href="{{ href }}">{{ label }} <span aria-hidden="true">→</span></a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

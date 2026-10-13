@@ -4,9 +4,10 @@
 <header class="page-heading">
   <div>
     <p class="date-line">{{ today.strftime('%Y年%m月%d日') }} · {{ weekday }}</p>
-    <h1>今天</h1>
+    <h1>今日</h1>
+    <p class="page-description">查看今天的学习状态、安排摘要和需要家长关注的事项。</p>
   </div>
-  <a class="button" href="/schedule/new">添加安排</a>
+  <a class="button button-primary" href="/schedule">管理日程</a>
 </header>
 
 {% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
@@ -19,7 +20,7 @@
   <div class="status-copy">
     <span class="status-label">当前状态</span>
     <h2 id="study-status-title">{{ workflow_state }}</h2>
-    <p>{{ workflow_guidance }}</p>
+    <p>{{ workflow_guidance }} · {{ camera_status }}</p>
     {% if study_session %}
       <p class="session-note">
         本次记录开始于 {{ study_session.started_at[11:16] }}
@@ -63,10 +64,10 @@
   <section class="content-section" aria-labelledby="agenda-title">
     <div class="section-heading">
       <div>
-        <h2 id="agenda-title">今日安排</h2>
-        <p>首次简报会播报这里的内容。</p>
+        <h2 id="agenda-title">安排摘要</h2>
+        <p>这里只展示今天最重要的安排；完整编辑请进入“日程”。</p>
       </div>
-      <a href="/schedule">管理日程</a>
+      <span class="count-badge">{{ items|length + today_courses|length }} 项</span>
     </div>
 
     {% if items or today_courses %}
@@ -103,37 +104,20 @@
     {% endif %}
   </section>
 
-  <section class="content-section" aria-labelledby="reminder-title">
+  <section class="content-section" aria-labelledby="summary-title">
     <div class="section-heading">
       <div>
-        <h2 id="reminder-title">今日提醒</h2>
-        <p>仅展示今天实际采用的设置。</p>
+        <h2 id="summary-title">今天的学习摘要</h2>
+        <p>只展示已经产生的记录，不把未接入能力伪装成已完成。</p>
       </div>
-      <a href="/today/settings">调整今天</a>
     </div>
-    <dl class="detail-list">
-      <div>
-        <dt>日期类型</dt>
-        <dd>{{ reminder_summary.day_type }}</dd>
-      </div>
-      <div>
-        <dt>首次简报</dt>
-        <dd>{{ reminder_summary.first_briefing }}</dd>
-      </div>
-      <div>
-        <dt>第二次提醒</dt>
-        <dd>{{ reminder_summary.second_reminder }}</dd>
-      </div>
-      <div>
-        <dt>作业开始提醒</dt>
-        <dd>{{ reminder_summary.homework_reminders }}</dd>
-      </div>
-      <div>
-        <dt>姿势语音提醒</dt>
-        <dd>{{ reminder_summary.posture_reminders }}</dd>
-      </div>
-    </dl>
-    <p class="section-footnote">孩子听完首次简报后可以先吃饭，不需要立即回答。</p>
+    <div class="metric-grid">
+      <div class="metric-item"><span>学习时长</span><strong>{{ dashboard_metrics.study_minutes }}{% if dashboard_metrics.study_minutes != '—' %} 分钟{% endif %}</strong></div>
+      <div class="metric-item"><span>异常记录</span><strong>{{ dashboard_metrics.anomalies }}</strong></div>
+      <div class="metric-item"><span>已完成任务</span><strong>{{ dashboard_metrics.completed_items }} / {{ dashboard_metrics.total_items }}</strong></div>
+      <div class="metric-item"><span>视频打卡</span><strong>{{ dashboard_metrics.video_checkins }}</strong></div>
+    </div>
+    <p class="section-footnote">孩子听完首次简报后可以先吃饭，不需要立即回答。<a href="/today/settings">调整今天的提醒</a></p>
   </section>
 </div>
 {% endblock %}

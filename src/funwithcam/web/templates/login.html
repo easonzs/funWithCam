@@ -2,25 +2,40 @@
 {% block title %}家长登录 · FunWithCam{% endblock %}
 {% block body %}
 <main class="login-shell">
-  <section class="login-panel" aria-labelledby="login-title">
-    <div class="brand-mark" aria-hidden="true">F</div>
-    <h1 id="login-title">家长登录</h1>
-    <p class="lead">管理今天的作业、课程和提醒时间。所有数据保存在这台 MacBook。</p>
-    {% if error %}
-      <p class="notice notice-error" role="alert">{{ error }}</p>
-    {% endif %}
-    <form method="post" action="/login" class="form-stack">
-      <label>
-        <span>用户名</span>
-        <input name="username" autocomplete="username" required autofocus>
-      </label>
-      <label>
-        <span>密码</span>
-        <input type="password" name="password" autocomplete="current-password" required>
-      </label>
-      <button class="button button-primary" type="submit">登录</button>
-    </form>
-    <p class="helper">首次使用请先在 MacBook 终端运行 <code>funwithcam create-admin</code>。</p>
+  <section class="login-window" aria-labelledby="login-title">
+    <div class="login-intro">
+      <div>
+        <span class="login-brand">FunWithCam</span>
+        <h1>温和、清楚的家庭学习辅助</h1>
+        <p>把家长录入的日程、摄像头观察和本地语音连接起来，帮助孩子完成开始、学习、暂停和结束的完整流程。</p>
+      </div>
+      <div class="login-privacy">
+        <strong>家庭本地服务</strong>
+        <span>视频、语音和学习记录默认只在这台 MacBook 上处理。</span>
+      </div>
+    </div>
+    <div class="login-form-column">
+      <div>
+        <span class="login-kicker">家长后台</span>
+        <h2 id="login-title">登录管理</h2>
+        <p>查看今日安排、执行记录和系统配置。</p>
+      </div>
+      {% if error %}
+        <p class="notice notice-error" role="alert">{{ error }}</p>
+      {% endif %}
+      <form method="post" action="/login" class="form-stack">
+        <label>
+          <span>用户名</span>
+          <input name="username" autocomplete="username" required autofocus>
+        </label>
+        <label>
+          <span>密码</span>
+          <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button class="button button-primary" type="submit">登录</button>
+      </form>
+      <p class="helper">首次使用请先在 MacBook 终端运行 <code>funwithcam create-admin</code>。</p>
+    </div>
   </section>
 </main>
 {% endblock %}

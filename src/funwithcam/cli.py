@@ -1,15 +1,17 @@
 import argparse
 import getpass
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .audio import AudioOutput
-from .assistant_service import run_assistant, validate_formal_identities
+from .assistant_service import run_assistant
 from .camera_test import run_camera_test
 from .config import load_config
 from .identity.commands import run_face_enrollment, run_face_verification
+from .media_check import probe_media
 from .speech import run_speech_test
 from .storage.auth_repository import AuthRepository
 from .storage.database import Database
@@ -101,6 +103,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="SQLite database path",
     )
     create_admin.add_argument("--username", default="parent")
+    create_admin.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="read one password line from standard input",
+    )
+
+    admin_exists = subparsers.add_parser(
+        "admin-exists",
+        help="return success when a parent Web login exists",
+    )
+    admin_exists.add_argument(
+        "--database",
+        type=Path,
+        default=Path("data/funwithcam.db"),
+        help="SQLite database path",
+    )
+    admin_exists.add_argument("--username", default="parent")
+
+    media_check = subparsers.add_parser(
+        "media-check",
+        help="verify that the camera stream contains usable media tracks",
+    )
+    media_check.add_argument(
+        "--url",
+        default="rtsp://go2rtc:8554/study_room",
+        help="RTSP stream URL to inspect",
+    )
+    media_check.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=15,
+        help="maximum time to wait for stream metadata",
+    )
+    media_check.add_argument(
+        "--require-audio",
+        action="store_true",
+        help="fail when the stream has no audio track",
+    )
 
     web = subparsers.add_parser("web", help="run the family LAN Web service")
     _add_runtime_paths(web)
@@ -169,18 +209,48 @@ def main() -> None:
         )
     elif args.command == "create-admin":
         config = load_config(args.config)
-        first = getpass.getpass("家长密码（至少 8 个字符）: ")
-        second = getpass.getpass("再次输入密码: ")
-        if first != second:
-            raise SystemExit("两次输入的密码不一致")
+        if args.password_stdin:
+            password = sys.stdin.readline().rstrip("\r\n")
+            if not password:
+                raise SystemExit("标准输入中没有密码")
+        else:
+            password = getpass.getpass("家长密码（至少 8 个字符）: ")
+            second = getpass.getpass("再次输入密码: ")
+            if password != second:
+                raise SystemExit("两次输入的密码不一致")
         database = Database(args.database)
         database.initialize()
         AuthRepository(database).set_password(
             args.username,
-            first,
+            password,
             datetime.now(ZoneInfo(config.timezone)),
         )
         print("parent login saved: username={}".format(args.username))
+    elif args.command == "admin-exists":
+        database = Database(args.database)
+        database.initialize()
+        if not AuthRepository(database).has_user(args.username):
+            raise SystemExit(1)
+        print("parent login exists: username={}".format(args.username))
+    elif args.command == "media-check":
+        if args.timeout_seconds <= 0:
+            raise SystemExit("--timeout-seconds 必须大于 0")
+        try:
+            result = probe_media(args.url, args.timeout_seconds)
+        except (RuntimeError, ValueError) as exc:
+            raise SystemExit(str(exc)) from exc
+        if not result.video_codecs:
+            raise SystemExit("摄像头流中没有检测到视频轨道")
+        if args.require_audio and not result.audio_codecs:
+            raise SystemExit(
+                "摄像头流有视频，但没有音频轨道；摄像头收音暂不可用"
+            )
+        print(
+            "media stream ready: video={} audio={}".format(
+                ",".join(result.video_codecs),
+                ",".join(result.audio_codecs) or "none",
+            )
+        )
     elif args.command == "web":
         config = load_config(args.config)
         try:
@@ -196,7 +266,6 @@ def main() -> None:
         run_assistant(args.config, args.database)
     elif args.command == "serve":
         config = load_config(args.config)
-        validate_formal_identities(args.database)
         try:
             import uvicorn
         except ImportError as exc:

@@ -12,7 +12,10 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from funwithcam.assistant_service import run_assistant
+from funwithcam.assistant_service import (
+    FormalIdentityMissingError,
+    run_assistant,
+)
 from funwithcam.calibration import (
     CalibrationCaptureResult,
     CalibrationCoordinator,
@@ -23,18 +26,32 @@ from funwithcam.calibration_steps import (
     CALIBRATION_STEPS,
 )
 from funwithcam.config import load_config
+from funwithcam.identity.repository import FaceProfileRepository
 from funwithcam.precheck import (
     CameraPrecheckRunner,
     PrecheckCoordinator,
     PrecheckResult,
 )
-from funwithcam.speech import SPEECH_COMMAND_GUIDE, run_speech_service
+from funwithcam.reminders import (
+    build_briefing_message,
+    build_reminder_plan,
+    build_second_reminder_message,
+)
+from funwithcam.speech import run_speech_service
 from funwithcam.storage.activity_repository import ActivityRepository
 from funwithcam.storage.auth_repository import AuthRepository, csrf_matches
 from funwithcam.storage.calibration_repository import CalibrationRepository
 from funwithcam.storage.database import Database
 from funwithcam.storage.family_repository import FamilyRepository
+from funwithcam.storage.interaction_repository import (
+    SpeechIntentRepository,
+    TaskTypeRepository,
+)
 from funwithcam.storage.reminder_repository import ReminderRepository
+from funwithcam.storage.speech_template_repository import (
+    DEFAULT_TEMPLATE_VARIABLES,
+    SpeechTemplateRepository,
+)
 from funwithcam.storage.study_session_repository import StudySessionRepository
 from funwithcam.storage.workflow_repository import WorkflowRepository
 
@@ -89,7 +106,9 @@ ACTIVITY_STATUS_LABELS = {
 ACTIVITY_SOURCE_LABELS = {
     "assistant": "系统",
     "camera": "摄像头",
-    "microphone": "麦克风",
+    "camera_audio": "摄像头麦克风",
+    "microphone": "MacBook 麦克风",
+    "macbook_microphone": "MacBook 麦克风",
     "scheduler": "定时任务",
     "speech": "语音口令",
     "web": "后台页面",
@@ -125,6 +144,9 @@ def create_app(
     activities = ActivityRepository(database)
     auth = AuthRepository(database)
     family = FamilyRepository(database)
+    speech_intents = SpeechIntentRepository(database)
+    speech_templates = SpeechTemplateRepository(database)
+    task_types = TaskTypeRepository(database)
     reminders = ReminderRepository(database)
     study_sessions = StudySessionRepository(database)
     calibrations = CalibrationRepository(database)
@@ -140,6 +162,10 @@ def create_app(
         timezone,
         calibration_runner
         or CameraCalibrationRunner(config, database_path),
+        assistant_pause_timeout=max(
+            6.0,
+            config.video.reconnect_seconds + 3.0,
+        ),
     )
     workflow = WorkflowRepository(database)
     web_root = Path(__file__).resolve().parent
@@ -223,6 +249,37 @@ def create_app(
     def health() -> dict:
         return {"status": "ok"}
 
+    @app.get("/health/live")
+    def health_live() -> dict:
+        return {"status": "ok"}
+
+    @app.get("/health/ready")
+    def health_ready() -> dict:
+        with database.connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+        templates = FaceProfileRepository(database).list_active("formal")
+        missing_identities = [
+            role
+            for role in ("child", "parent")
+            if not any(template.role == role for template in templates)
+        ]
+        missing_models = [
+            str(path)
+            for path in (
+                config.identity.detector_model,
+                config.identity.recognizer_model,
+            )
+            if not path.is_file()
+        ]
+        if config.speech.enabled and not config.speech.model_path.is_dir():
+            missing_models.append(str(config.speech.model_path))
+        return {
+            "status": "ready" if not missing_models else "configuration_required",
+            "setup_required": bool(missing_identities or missing_models),
+            "missing_identities": missing_identities,
+            "missing_models": missing_models,
+        }
+
     @app.get("/login", response_class=HTMLResponse)
     def login_page(request: Request, error: Optional[str] = None):
         return templates.TemplateResponse(
@@ -285,6 +342,19 @@ def create_app(
             preferences,
             settings,
         )
+        today_events = activities.list_for_date(today.isoformat())
+        latest_session = next(
+            (
+                record
+                for record in study_sessions.list_recent()
+                if record["session_date"] == today.isoformat()
+            ),
+            None,
+        )
+        completed_items = sum(item["status"] == "done" for item in items)
+        video_checkins = sum(
+            item.get("completion_evidence") == "video" for item in items
+        )
         return render_page(
             request,
             "dashboard.html",
@@ -300,6 +370,24 @@ def create_app(
             workflow_value=workflow_value,
             study_session=study_sessions.get_latest(today.isoformat()),
             precheck_result=prechecks.latest(today.isoformat()),
+            dashboard_metrics={
+                "study_minutes": (
+                    int(round(latest_session["study_minutes"]))
+                    if latest_session
+                    else "—"
+                ),
+                "anomalies": sum(
+                    event["category"] == "anomaly" for event in today_events
+                ),
+                "completed_items": completed_items,
+                "total_items": len(items) + len(today_courses),
+                "video_checkins": video_checkins,
+            },
+            camera_status=(
+                "视频流已配置"
+                if config.video.stream_url.strip()
+                else "视频流未配置"
+            ),
             message=message,
             error=error,
         )
@@ -340,6 +428,7 @@ def create_app(
             "agenda_form.html",
             session,
             "schedule",
+            task_types=task_types.list_all(enabled_only=True),
             error=error,
         )
 
@@ -387,12 +476,41 @@ def create_app(
                 record["state"],
                 record["state"],
             )
+        current_iso_week = datetime.now(timezone).date().isocalendar()
+        week_records = [
+            record
+            for record in records
+            if (
+                date.fromisoformat(record["session_date"]).isocalendar().year,
+                date.fromisoformat(record["session_date"]).isocalendar().week,
+            )
+            == (current_iso_week.year, current_iso_week.week)
+        ]
+        completed_week_records = [
+            record for record in week_records if record["state"] == "COMPLETED"
+        ]
+        average_minutes = (
+            int(
+                round(
+                    sum(record["study_minutes"] for record in completed_week_records)
+                    / len(completed_week_records)
+                )
+            )
+            if completed_week_records
+            else None
+        )
         return render_page(
             request,
             "records.html",
             session,
             "records",
             records=records,
+            record_metrics={
+                "week_sessions": len(completed_week_records),
+                "average_minutes": average_minutes,
+                "average_away": "—",
+                "posture_trend": "待积累",
+            },
         )
 
     @app.get("/history", response_class=HTMLResponse)
@@ -442,6 +560,337 @@ def create_app(
             events=events,
         )
 
+    @app.get("/config", response_class=HTMLResponse)
+    def config_home(request: Request):
+        _require_session(request, auth, timezone)
+        return RedirectResponse("/config/studying", status_code=303)
+
+    @app.get("/config/{section}", response_class=HTMLResponse)
+    def config_section_page(
+        request: Request,
+        section: str,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        allowed_sections = {
+            "arrival",
+            "start",
+            "studying",
+            "away",
+            "finish",
+            "checkin",
+            "speech",
+            "speech-templates",
+            "interaction",
+            "device",
+            "profile",
+            "settings",
+            "privacy",
+        }
+        if section not in allowed_sections:
+            raise HTTPException(status_code=404, detail="configuration section not found")
+
+        today = datetime.now(timezone).date()
+        settings = family.get_settings()
+        context = {
+            "config_section": section,
+            "section": section,
+            "today": today,
+            "message": message,
+            "error": error,
+        }
+
+        if section == "settings":
+            return render_page(
+                request,
+                "settings.html",
+                session,
+                "config",
+                settings=settings,
+                calibration_version=calibrations.get_latest_version(),
+                speech_enabled=config.speech.enabled,
+                camera_configured=bool(config.video.stream_url.strip()),
+                **context,
+            )
+        if section == "speech":
+            input_source = (
+                "摄像头麦克风"
+                if config.speech.input_source == "camera"
+                else "MacBook 麦克风"
+            )
+            return render_page(
+                request,
+                "speech.html",
+                session,
+                "config",
+                speech_enabled=config.speech.enabled,
+                speech_commands=speech_intents.list_all(),
+                input_source=input_source,
+                **context,
+            )
+        if section == "speech-templates":
+            now = datetime.now(timezone)
+            plan = build_reminder_plan(
+                today,
+                timezone,
+                family.get_daily_preferences(today),
+                settings,
+            )
+            items = family.list_agenda(today)
+            courses = family.list_courses_for_date(today)
+            template_items = []
+            for item in speech_templates.list_all():
+                if item["event_key"] == "first_briefing":
+                    preview = build_briefing_message(
+                        items,
+                        courses,
+                        plan,
+                        now,
+                        settings["child_name"],
+                        item["template_text"],
+                    )
+                elif item["event_key"] == "second_reminder":
+                    preview = build_second_reminder_message(
+                        items,
+                        plan.second_reminder_at or now,
+                        settings["child_name"],
+                        item["template_text"],
+                    )
+                else:
+                    preview = _render_template_preview(
+                        item["template_text"],
+                        settings["child_name"],
+                    )
+                item["preview"] = preview
+                item["runtime_supported"] = item["event_key"] in {
+                    "first_briefing",
+                    "second_reminder",
+                    "posture_abnormal",
+                    "light_abnormal",
+                    "seat_leave",
+                }
+                template_items.append(item)
+            return render_page(
+                request,
+                "speech_templates.html",
+                session,
+                "config",
+                templates=template_items,
+                variables=DEFAULT_TEMPLATE_VARIABLES,
+                **context,
+            )
+        if section == "interaction":
+            return render_page(
+                request,
+                "interaction.html",
+                session,
+                "config",
+                settings=settings,
+                **context,
+            )
+        if section == "finish":
+            return render_page(
+                request,
+                "finish_checks.html",
+                session,
+                "config",
+                task_types=task_types.list_all(),
+                **context,
+            )
+        if section == "studying":
+            return render_page(
+                request,
+                "reminders.html",
+                session,
+                "config",
+                settings=settings,
+                **context,
+            )
+        if section == "profile":
+            draft = (
+                calibrations.get_active()
+                or calibrations.get_latest_completed_draft()
+            )
+            return render_page(
+                request,
+                "config_section.html",
+                session,
+                "config",
+                title="孩子与基准",
+                description="管理孩子称呼、身份资料和一次录入、长期使用的动作与光线基准。",
+                scope="这里只维护长期参考，不改变今天的日程和提醒时间。",
+                status="已配置" if calibrations.get_latest_version() else "需要录入",
+                config_rows=[
+                    ("孩子称呼", "用于首次简报和异常提醒", settings["child_name"], "已配置"),
+                    (
+                        "正式人脸档案",
+                        "用于首次出现和开始学习时的身份确认",
+                        "已部署" if FaceProfileRepository(database).list_active("formal") else "未确认",
+                        "本地",
+                    ),
+                    (
+                        "动作与光线基准",
+                        "用于学习中观察和开始前检查",
+                        "版本 {}".format(calibrations.get_latest_version()["id"])
+                        if calibrations.get_latest_version()
+                        else "尚未录入",
+                        "可重录",
+                    ),
+                ],
+                primary_link="/calibration",
+                primary_label="查看或重新录入基准",
+                **context,
+            )
+        if section == "device":
+            input_source = (
+                "摄像头麦克风"
+                if config.speech.input_source == "camera"
+                else "MacBook 麦克风"
+            )
+            return render_page(
+                request,
+                "config_section.html",
+                session,
+                "config",
+                title="摄像头与收音",
+                description="集中查看视频流、语音输入、语音输出和视觉采样的真实配置状态。",
+                scope="这里只解释设备来源和运行条件；异常详情请查看记录。",
+                status="Web 服务正常",
+                config_rows=[
+                    ("视频流", "go2rtc 视频地址", "已配置" if config.video.stream_url.strip() else "未配置", "Camera"),
+                    ("语音输入", "当前收音来源", input_source, "已启用" if config.speech.enabled else "未启用"),
+                    ("语音输出", "本地 say 播报", "MacBook 本地输出", "已启用"),
+                    ("视觉观察", "姿态、亮度和离座判断", settings["observation_interval_seconds"] + " 秒采样", "已配置"),
+                ],
+                primary_link="/health",
+                primary_label="查看服务健康状态",
+                **context,
+            )
+        if section == "privacy":
+            return render_page(
+                request,
+                "config_section.html",
+                session,
+                "config",
+                title="数据与隐私",
+                description="查看本地服务保存哪些记录，以及基准图片、执行历史和媒体文件如何使用。",
+                scope="FunWithCam 默认在这台 MacBook 上处理数据，不读取 Mac 系统日历，也不自动上传云端。",
+                status="本地处理",
+                config_rows=[
+                    ("学习与提醒记录", "事件、时间、来源和结果", "保存在 SQLite", "本地"),
+                    ("基准图片", "家长主动采集并确认的样本", "保留历史版本", "可手工清理"),
+                    ("执行历史", "提醒、识别、语音输入和系统输出", "按日期回溯", "可查看"),
+                    ("连续视频与音频", "普通学习过程的原始媒体", "不默认保存", "关闭"),
+                ],
+                primary_link="/history",
+                primary_label="查看执行历史",
+                **context,
+            )
+        if section == "arrival":
+            preferences = family.get_daily_preferences(today)
+            return render_page(
+                request,
+                "config_section.html",
+                session,
+                "config",
+                title="到家与日程提醒",
+                description="首次确认到孩子后，系统读取 FunWithCam 日程并生成当天真正会播放的简报。",
+                scope="这里只说明触发条件和内容来源；课程、作业和打卡内容统一在“日程”中维护。",
+                status="首次提醒每天最多一次",
+                config_rows=[
+                    ("上学日首次简报", settings["first_briefing_weekday_time"] + " 后", "连续确认孩子", "已启用"),
+                    ("休息日首次简报", settings["first_briefing_rest_day_time"] + " 后", "连续确认孩子", "已启用"),
+                    ("第二次提醒", settings["second_reminder_weekday_time"] + " / " + settings["second_reminder_rest_day_time"], "仍未开始学习", "每天最多一次"),
+                    ("今天日期类型", preferences["day_type"], "可在今日单独覆盖", "已生效"),
+                ],
+                source_rows=[
+                    ("孩子称呼", "家庭基础设置", settings["child_name"]),
+                    ("固定课程", "今日启用的每周课程", "{} 项".format(len(family.list_courses_for_date(today)))),
+                    ("学校作业与打卡", "今天的日程安排", "{} 项".format(len(family.list_agenda(today)))),
+                    ("下一次提醒时间", "提醒计划计算结果", _reminder_summary(today.weekday(), preferences, settings)["second_reminder"]),
+                ],
+                links=[
+                    ("/schedule", "去日程维护安排"),
+                    ("/config/speech-templates", "调整真实播报话术"),
+                    ("/config/settings", "调整默认时间"),
+                ],
+                **context,
+            )
+        if section == "start":
+            return render_page(
+                request,
+                "config_section.html",
+                session,
+                "config",
+                title="开始学习",
+                description="孩子准备好以后，通过语音或网页按钮进入开始前检查，检查通过后才建立正式学习记录。",
+                scope="这里只说明开始条件和检查链路；具体口令在“语音口令”中维护。",
+                status="开始前检查已接入",
+                config_rows=[
+                    ("开始入口", "语音口令或今日页面按钮", "开始学习 / 开始作业", "可用"),
+                    ("身份确认", "正式人脸档案，多帧连续确认", "孩子本人", "已配置"),
+                    ("环境检查", "视频流、书桌区域和光线", "连续通过后开始", "已接入"),
+                    ("结果记录", "通过或失败都写入执行历史", "来源可回溯", "已接入"),
+                ],
+                links=[
+                    ("/config/speech", "配置开始口令"),
+                    ("/", "回到今日测试开始"),
+                    ("/history", "查看开始检查记录"),
+                ],
+                **context,
+            )
+        if section == "away":
+            return render_page(
+                request,
+                "config_section.html",
+                session,
+                "config",
+                title="离座与恢复",
+                description="离座阈值决定学习状态什么时候暂停；回来后的继续或结束询问使用独立的交互规则。",
+                scope="离座阈值和重复询问是两个维度：前者来自视觉观察，后者只在系统已经提问后生效。",
+                status="持续视觉监测与自动暂停已接入",
+                config_rows=[
+                    ("自动暂停", "连续离座达到阈值", settings["away_auto_pause_minutes"] + " 分钟", "可配置"),
+                    ("长时间中断", "连续离座达到阈值", settings["away_interrupted_minutes"] + " 分钟", "可配置"),
+                    ("回来后第一次询问", "系统提问后等待", settings["dialogue_first_retry_seconds"] + " 秒", "交互设置"),
+                    ("后续重复询问", "没有有效回答时", settings["dialogue_next_retry_seconds"] + " 秒 / 最多 " + settings["dialogue_max_prompts"] + " 次", "交互设置"),
+                ],
+                links=[
+                    ("/config/studying", "配置视觉异常规则"),
+                    ("/config/interaction", "配置提问与重复询问"),
+                    ("/guide#away", "查看完整离座流程"),
+                ],
+                **context,
+            )
+        if section == "checkin":
+            return render_page(
+                request,
+                "config_section.html",
+                session,
+                "config",
+                title="打卡录制",
+                description="视频打卡是结束检查中的一种完成证据，准备、录制、保存和失败都会留下执行记录。",
+                scope="这里展示打卡如何运行；任务类型和最长录制时长统一在“结束检查”中维护。",
+                status="本地保存 · 由日程任务决定是否询问",
+                config_rows=[
+                    ("准备", "孩子说出打卡意图后", "系统提示准备材料", "已接入"),
+                    ("开始", "孩子明确回答开始录制", "进入视频录制", "已接入"),
+                    ("结束", "结束口令或达到时长上限", "保存视频证据", "已接入"),
+                    ("失败", "视频流或录制异常", "播报失败原因并记录", "已接入"),
+                ],
+                task_types=task_types.list_all(),
+                links=[
+                    ("/config/speech", "配置结束打卡口令"),
+                    ("/config/finish", "配置任务与最长时长"),
+                    ("/guide#checkin", "查看打卡使用说明"),
+                    ("/history", "查看打卡执行记录"),
+                ],
+                **context,
+            )
+
+        raise HTTPException(status_code=404, detail="configuration section not found")
+
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(
         request: Request,
@@ -458,9 +907,235 @@ def create_app(
             settings=family.get_settings(),
             calibration_version=calibrations.get_latest_version(),
             speech_enabled=config.speech.enabled,
-            speech_commands=SPEECH_COMMAND_GUIDE,
             camera_configured=bool(config.video.stream_url.strip()),
             today=today,
+            message=message,
+            error=error,
+        )
+
+    @app.get("/speech", response_class=HTMLResponse)
+    def speech_page(
+        request: Request,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        input_source = (
+            "摄像头麦克风"
+            if config.speech.input_source == "camera"
+            else "MacBook 麦克风"
+        )
+        return render_page(
+            request,
+            "speech.html",
+            session,
+            "speech",
+            speech_enabled=config.speech.enabled,
+            speech_commands=speech_intents.list_all(),
+            input_source=input_source,
+            message=message,
+            error=error,
+        )
+
+    @app.post("/speech/{command}")
+    async def save_speech_intent(command: str, request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            speech_intents.save(
+                command,
+                _split_lines(form.get("custom_phrases")),
+                _split_keyword_groups(form.get("keyword_groups")),
+                str(form.get("confirmation_mode", "")),
+                str(form.get("confirmation_prompt", "")),
+                _split_lines(form.get("confirm_phrases")),
+                _split_lines(form.get("cancel_phrases")),
+                form.get("enabled") == "on",
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/speech", error=str(exc))
+        return _redirect("/speech", message="语音口令规则已保存并立即生效")
+
+    @app.get("/speech-templates", response_class=HTMLResponse)
+    def speech_templates_page(
+        request: Request,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        today = datetime.now(timezone).date()
+        now = datetime.now(timezone)
+        settings = family.get_settings()
+        plan = build_reminder_plan(
+            today,
+            timezone,
+            family.get_daily_preferences(today),
+            settings,
+        )
+        items = family.list_agenda(today)
+        courses = family.list_courses_for_date(today)
+        templates = []
+        for item in speech_templates.list_all():
+            if item["event_key"] == "first_briefing":
+                preview = build_briefing_message(
+                    items,
+                    courses,
+                    plan,
+                    now,
+                    settings["child_name"],
+                    item["template_text"],
+                )
+            elif item["event_key"] == "second_reminder":
+                preview = build_second_reminder_message(
+                    items,
+                    plan.second_reminder_at or now,
+                    settings["child_name"],
+                    item["template_text"],
+                )
+            else:
+                preview = _render_template_preview(
+                    item["template_text"],
+                    settings["child_name"],
+                )
+            item["preview"] = preview
+            item["runtime_supported"] = item["event_key"] in {
+                "first_briefing",
+                "second_reminder",
+                "posture_abnormal",
+                "light_abnormal",
+                "seat_leave",
+            }
+            templates.append(item)
+        return render_page(
+            request,
+            "speech_templates.html",
+            session,
+            "speech_templates",
+            templates=templates,
+            variables=DEFAULT_TEMPLATE_VARIABLES,
+            today=today,
+            message=message,
+            error=error,
+        )
+
+    @app.post("/speech-templates/{event_key}")
+    async def save_speech_template(event_key: str, request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            speech_templates.save(
+                event_key,
+                str(form.get("template_text", "")),
+                form.get("enabled") == "on",
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/speech-templates", error=str(exc))
+        return _redirect(
+            "/speech-templates",
+            message="系统话术模板已保存并立即生效",
+        )
+
+    @app.get("/interaction", response_class=HTMLResponse)
+    def interaction_page(
+        request: Request,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        return render_page(
+            request,
+            "interaction.html",
+            session,
+            "interaction",
+            settings=family.get_settings(),
+            message=message,
+            error=error,
+        )
+
+    @app.post("/interaction/settings")
+    async def save_interaction_settings(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        keys = (
+            "dialogue_first_retry_seconds",
+            "dialogue_next_retry_seconds",
+            "dialogue_max_prompts",
+        )
+        try:
+            family.save_settings(
+                {key: str(form.get(key, "")).strip() for key in keys},
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/interaction", error=str(exc))
+        return _redirect("/interaction", message="交互确认设置已保存")
+
+    @app.get("/finish-checks", response_class=HTMLResponse)
+    def finish_checks_page(
+        request: Request,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        return render_page(
+            request,
+            "finish_checks.html",
+            session,
+            "finish_checks",
+            task_types=task_types.list_all(),
+            message=message,
+            error=error,
+        )
+
+    @app.post("/task-types")
+    async def save_task_type(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            task_types.save(
+                str(form.get("task_key", "")),
+                str(form.get("label", "")),
+                str(form.get("category", "")),
+                str(form.get("completion_mode", "")),
+                str(form.get("finish_prompt", "")),
+                form.get("include_in_finish_check") == "on",
+                _optional_int(form.get("max_recording_seconds")),
+                form.get("enabled") == "on",
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/finish-checks", error=str(exc))
+        return _redirect("/finish-checks", message="结束检查模板已保存")
+
+    @app.get("/guide", response_class=HTMLResponse)
+    def guide_page(request: Request):
+        _, session = _require_session(request, auth, timezone)
+        return render_page(
+            request,
+            "guide.html",
+            session,
+            "guide",
+        )
+
+    @app.get("/reminders", response_class=HTMLResponse)
+    def reminders_page(
+        request: Request,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        return render_page(
+            request,
+            "reminders.html",
+            session,
+            "reminders",
+            settings=family.get_settings(),
             message=message,
             error=error,
         )
@@ -614,6 +1289,12 @@ def create_app(
                 _int_or_zero(form.get("preparation_minutes")),
                 str(form.get("notes", "")),
                 datetime.now(timezone),
+                _form_optional(form.get("task_type_key")),
+                (
+                    form.get("include_in_finish_check") == "on"
+                    if form.get("finish_check_present") == "1"
+                    else None
+                ),
             )
         except ValueError as exc:
             return _redirect("/schedule/new", error=str(exc))
@@ -625,14 +1306,42 @@ def create_app(
         form = await request.form()
         _require_csrf(token, str(form.get("csrf", "")))
         try:
-            family.set_agenda_status(
+            status = str(form.get("status", ""))
+            if status == "done":
+                family.set_completion_evidence(
+                    item_id,
+                    "parent_confirmed",
+                    datetime.now(timezone),
+                )
+            elif status == "pending":
+                family.set_completion_evidence(
+                    item_id,
+                    "none",
+                    datetime.now(timezone),
+                )
+            else:
+                raise ValueError("invalid agenda status")
+        except ValueError as exc:
+            return _redirect("/schedule", error=str(exc))
+        return _redirect("/schedule", message="完成状态已更新")
+
+    @app.post("/today/items/{item_id}/finish-check")
+    async def set_item_finish_check(item_id: int, request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            enabled = str(form.get("enabled", ""))
+            if enabled not in ("0", "1"):
+                raise ValueError("invalid finish check setting")
+            family.set_finish_check_enabled(
                 item_id,
-                str(form.get("status", "")),
+                enabled == "1",
                 datetime.now(timezone),
             )
         except ValueError as exc:
             return _redirect("/schedule", error=str(exc))
-        return _redirect("/schedule", message="完成状态已更新")
+        return _redirect("/schedule", message="结束检查设置已更新")
 
     @app.post("/today/items/{item_id}/delete")
     async def delete_item(item_id: int, request: Request):
@@ -790,6 +1499,37 @@ def create_app(
             return _redirect("/settings", error=str(exc))
         return _redirect("/settings", message="长期设置已保存")
 
+    @app.post("/reminders")
+    async def save_reminder_settings(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        reminder_keys = (
+            "observation_interval_seconds",
+            "posture_trigger_count",
+            "posture_trigger_window_minutes",
+            "posture_reminder_cooldown_minutes",
+            "light_trigger_count",
+            "light_trigger_window_minutes",
+            "light_reminder_cooldown_minutes",
+            "seat_leave_trigger_count",
+            "seat_leave_trigger_window_minutes",
+            "seat_leave_reminder_cooldown_minutes",
+            "away_auto_pause_minutes",
+            "away_interrupted_minutes",
+        )
+        try:
+            family.save_settings(
+                {
+                    key: str(form.get(key, "")).strip()
+                    for key in reminder_keys
+                },
+                datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect("/reminders", error=str(exc))
+        return _redirect("/reminders", message="提醒规则已保存")
+
     return app
 
 
@@ -813,6 +1553,17 @@ def _redirect(path: str, **query: str) -> RedirectResponse:
         separator = "&" if "?" in path else "?"
         path = "{}{}{}".format(path, separator, urlencode(query))
     return RedirectResponse(path, status_code=303)
+
+
+def _render_template_preview(template: str, child_name: str) -> str:
+    return (
+        template
+        .replace("{孩子称呼}", child_name)
+        .replace("{今天安排简报}", "今天有数学练习册。")
+        .replace("{下一次提醒时间}", "18点10分")
+        .replace("{当前时间}", "18点10分")
+        .replace("{待完成任务列表}", "数学练习册")
+    )
 
 
 def _reminder_summary(
@@ -861,6 +1612,28 @@ def _form_optional(value) -> Optional[str]:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _split_lines(value) -> list[str]:
+    if value is None:
+        return []
+    text = str(value).replace("，", "\n").replace(",", "\n")
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def _split_keyword_groups(value) -> list[list[str]]:
+    if value is None:
+        return []
+    groups = []
+    for line in str(value).splitlines():
+        words = [
+            word.strip()
+            for word in line.replace("，", ",").split(",")
+            if word.strip()
+        ]
+        if words:
+            groups.append(words)
+    return groups
 
 
 def _optional_int(value) -> Optional[int]:
@@ -943,10 +1716,19 @@ def _run_assistant_thread(
     database_path: Path,
     stop_event: threading.Event,
 ) -> None:
-    try:
-        run_assistant(config_path, database_path, stop_event)
-    except Exception:
-        LOGGER.exception("assistant service stopped unexpectedly")
+    while not stop_event.is_set():
+        try:
+            run_assistant(config_path, database_path, stop_event)
+            return
+        except FormalIdentityMissingError as exc:
+            LOGGER.warning(
+                "assistant is waiting for formal identities: %s",
+                exc,
+            )
+            stop_event.wait(10)
+        except Exception:
+            LOGGER.exception("assistant service stopped unexpectedly")
+            return
 
 
 def _run_speech_thread(

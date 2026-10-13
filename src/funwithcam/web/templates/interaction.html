@@ -1,0 +1,66 @@
+{% extends "app_shell.html" %}
+{% block title %}交互设置 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>交互设置</h1>
+    <p class="page-description">只管理系统提出问题后，等待孩子回答和重复询问的节奏。</p>
+  </div>
+</header>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="interaction-summary" aria-labelledby="interaction-summary-title">
+  <div>
+    <h2 id="interaction-summary-title">当前规则</h2>
+    <p>初次询问后等待 {{ settings.dialogue_first_retry_seconds }} 秒，之后每隔 {{ settings.dialogue_next_retry_seconds }} 秒重问，包含初次询问在内最多 {{ settings.dialogue_max_prompts }} 次。</p>
+  </div>
+  <a class="button button-quiet" href="/guide">查看完整场景说明</a>
+</section>
+
+<div class="settings-layout interaction-settings">
+  <section class="settings-section">
+    <div class="section-heading">
+      <div>
+        <h2>这组设置用在哪里</h2>
+        <p>只有系统正在等待明确回答时才使用，不影响首次简报、第二次提醒、坐姿或光线提醒。</p>
+      </div>
+    </div>
+    <dl class="interaction-scenarios">
+      <div><dt>口令二次确认</dt><dd>模糊匹配或“结束学习”等高影响操作。</dd></div>
+      <div><dt>结束完成情况检查</dt><dd>逐项询问当天作业和打卡是否完成。</dd></div>
+      <div><dt>视频打卡准备</dt><dd>等待“开始打卡”或“取消打卡”。</dd></div>
+      <div><dt>离座回来后的询问</dt><dd>视觉监测已能自动暂停；回来后自动询问仍待接入，目前通过语音或 Web 主动继续。</dd></div>
+    </dl>
+  </section>
+
+  <section class="settings-section">
+    <div class="section-heading">
+      <div>
+        <h2>等待与重复询问</h2>
+        <p>达到最大次数仍没有有效回答时停止询问，保持原状态，不自动判定任务完成。</p>
+      </div>
+    </div>
+    <form method="post" action="/interaction/settings" class="settings-grid">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>
+        <span>第一次重问前等待（秒）</span>
+        <input type="number" min="1" name="dialogue_first_retry_seconds" value="{{ settings.dialogue_first_retry_seconds }}" required>
+      </label>
+      <label>
+        <span>后续重问间隔（秒）</span>
+        <input type="number" min="1" name="dialogue_next_retry_seconds" value="{{ settings.dialogue_next_retry_seconds }}" required>
+      </label>
+      <label>
+        <span>最多询问次数</span>
+        <input type="number" min="1" max="5" name="dialogue_max_prompts" value="{{ settings.dialogue_max_prompts }}" required>
+        <small class="field-help">包含第一次询问。例如设置为 3，表示首次询问加最多两次重问。</small>
+      </label>
+      <div class="form-actions">
+        <button class="button button-primary" type="submit">保存交互设置</button>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,118 @@
+{% extends "app_shell.html" %}
+{% block title %}提醒 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>提醒</h1>
+    <p class="page-description">查看提醒何时触发、如何累计异常，以及语音提醒之间的冷却时间。</p>
+  </div>
+</header>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="settings-section" aria-labelledby="active-reminders-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="active-reminders-title">已经生效的提醒</h2>
+      <p>首次和第二次提醒由日程时间驱动；今天的开关和第二次提醒时间仍可在“今日”页面单独覆盖。</p>
+    </div>
+  </div>
+  <div class="reminder-rule-list">
+    <article class="reminder-rule-row">
+      <div>
+        <h3>首次日程简报</h3>
+        <p>孩子在对应时间段首次被确认到家或出现时，播报当天课程和作业。</p>
+        <p class="reminder-script"><strong>当前话术示例：</strong>“小朋友，今天18点有英语课。今天有数学练习册。你可以先安排吃饭和休息，我会在18点10分再提醒你。”</p>
+      </div>
+      <strong>按上学日 / 休息日时间</strong>
+    </article>
+    <article class="reminder-rule-row">
+      <div>
+        <h3>第二次作业提醒</h3>
+        <p>首次简报后仍未开始学习时，在设定时间提醒一次；超过宽限时间则记为过期。</p>
+        <p class="reminder-script"><strong>当前话术示例：</strong>“小朋友，现在是18点10分。今天还有数学练习册，可以开始准备了。”</p>
+      </div>
+      <strong>每天最多一次</strong>
+    </article>
+    <article class="reminder-rule-row">
+      <div>
+        <h3>开始学习前检查</h3>
+        <p>孩子用口令开始学习时，检查书桌区域、身份和光线，通过后才建立学习记录。</p>
+        <p class="reminder-script"><strong>开始提示：</strong>“小朋友，请在书桌前保持五秒，我先检查一下。”</p>
+        <p class="reminder-script"><strong>通过提示：</strong>“小朋友，检查通过，开始记录学习。”</p>
+        <p class="reminder-script"><strong>未通过示例：</strong>“小朋友，书桌区域光线偏暗，请先开灯。”</p>
+      </div>
+      <strong>每次开始前</strong>
+    </article>
+  </div>
+</section>
+
+<section class="settings-section" aria-labelledby="monitoring-rules-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="monitoring-rules-title">学习过程规则</h2>
+      <p>异常会按时间窗累计，达到次数后才满足提醒条件；达到条件后进入冷却时间，避免连续打扰。</p>
+      <p class="section-footnote">这些参数已接入学习中视觉监测。系统只在“正在学习”状态采样，不会持续做人脸比对；异常即使未达到语音条件也会写入观察记录。</p>
+    </div>
+  </div>
+  <form method="post" action="/reminders" class="form-grid settings-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="span-2">
+      <span>观察间隔（秒）</span>
+      <input type="number" name="observation_interval_seconds" min="1" value="{{ settings.observation_interval_seconds }}" required>
+      <small class="field-help">摄像头分析两次状态之间的最短间隔。</small>
+    </label>
+
+    <fieldset class="rule-fieldset span-2">
+      <legend>持续离开书桌后的状态变化</legend>
+      <label>
+        <span>自动暂停（分钟）</span>
+        <input type="number" name="away_auto_pause_minutes" min="1" value="{{ settings.away_auto_pause_minutes }}" required>
+        <small class="field-help">连续离开达到该时间后，将学习标记为暂时离开或自动暂停。</small>
+      </label>
+      <label>
+        <span>标记学习中断（分钟）</span>
+        <input type="number" name="away_interrupted_minutes" min="1" value="{{ settings.away_interrupted_minutes }}" required>
+        <small class="field-help">连续离开达到该时间后，记录为长时间中断，但不会自动结束学习。</small>
+      </label>
+      <div class="rule-explanation">
+        <strong>与“重复询问”不同</strong>
+        <p>这里决定摄像头观察到持续离座后如何改变学习状态；“交互设置”只决定系统提问后多久重问。</p>
+      </div>
+      <p class="field-help span-2">连续两次采样未在书桌区域看到有效姿态后确认离座；达到自动暂停时间后停止本次视觉监测。长时间中断参数暂不自动改变状态。</p>
+    </fieldset>
+
+    <fieldset class="rule-fieldset span-2">
+      <legend>坐姿 / 头部过低</legend>
+      <label><span>时间窗内累计次数</span><input type="number" name="posture_trigger_count" min="1" value="{{ settings.posture_trigger_count }}" required></label>
+      <label><span>时间窗（分钟）</span><input type="number" name="posture_trigger_window_minutes" min="1" value="{{ settings.posture_trigger_window_minutes }}" required></label>
+      <label><span>语音冷却（分钟）</span><input type="number" name="posture_reminder_cooldown_minutes" min="1" value="{{ settings.posture_reminder_cooldown_minutes }}" required></label>
+      <p class="field-help span-2">同时对比已确认的正常坐姿、写字和阅读基准；当天关闭“姿势语音提醒”后仍记录异常，但不播报。</p>
+      <p class="reminder-script span-2"><strong>当前默认话术：</strong>“小朋友，头稍微抬高一点，保持舒服的坐姿。”</p>
+    </fieldset>
+
+    <fieldset class="rule-fieldset span-2">
+      <legend>光线偏暗</legend>
+      <label><span>时间窗内累计次数</span><input type="number" name="light_trigger_count" min="1" value="{{ settings.light_trigger_count }}" required></label>
+      <label><span>时间窗（分钟）</span><input type="number" name="light_trigger_window_minutes" min="1" value="{{ settings.light_trigger_window_minutes }}" required></label>
+      <label><span>语音冷却（分钟）</span><input type="number" name="light_reminder_cooldown_minutes" min="1" value="{{ settings.light_reminder_cooldown_minutes }}" required></label>
+      <p class="field-help span-2">以基准采集时家长确认的“正常光线”为依据，明显低于基准才累计异常。</p>
+      <p class="reminder-script span-2"><strong>当前默认话术：</strong>“小朋友，书桌有点暗，请把灯光调亮一些。”</p>
+    </fieldset>
+
+    <fieldset class="rule-fieldset span-2">
+      <legend>频繁离座</legend>
+      <label><span>时间窗内累计次数</span><input type="number" name="seat_leave_trigger_count" min="1" value="{{ settings.seat_leave_trigger_count }}" required></label>
+      <label><span>时间窗（分钟）</span><input type="number" name="seat_leave_trigger_window_minutes" min="1" value="{{ settings.seat_leave_trigger_window_minutes }}" required></label>
+      <label><span>语音冷却（分钟）</span><input type="number" name="seat_leave_reminder_cooldown_minutes" min="1" value="{{ settings.seat_leave_reminder_cooldown_minutes }}" required></label>
+      <p class="field-help span-2">一次连续离开只累计一次；重新回到书桌后再次离开，才会形成下一次离座记录。</p>
+      <p class="reminder-script span-2"><strong>当前默认话术：</strong>“小朋友，如果没有需要离开，可以先回来坐好。”</p>
+    </fieldset>
+
+    <div class="form-actions span-2">
+      <button class="button button-primary" type="submit">保存提醒规则</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

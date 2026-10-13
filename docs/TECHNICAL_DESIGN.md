@@ -1,5 +1,8 @@
 # FunWithCam 技术设计
 
+> 可配置语义匹配、持久化对话、任务完成证据和视频打卡的增量设计见
+> `INTERACTION_TECHNICAL_DESIGN.md`。
+
 ## 1. 设计目标
 
 新实现以单家庭、单儿童、单摄像头和单台 MacBook 为边界，优先保证：

@@ -19,6 +19,21 @@
       <option value="temporary">临时安排</option>
     </select>
   </label>
+  <label>
+    <span>结束检查模板</span>
+    <select name="task_type_key">
+      <option value="">不使用结束检查模板</option>
+      {% for task_type in task_types %}
+        <option value="{{ task_type.task_key }}" {% if task_type.task_key == 'school_homework' %}selected{% endif %}>
+          {{ task_type.label }} ·
+          {% if task_type.completion_mode == 'video' %}视频打卡
+          {% elif task_type.completion_mode == 'parent' %}家长确认
+          {% else %}语音确认{% endif %}
+        </option>
+      {% endfor %}
+    </select>
+    <small class="field-help">决定系统如何确认完成：孩子回答、视频打卡或家长确认。</small>
+  </label>
   <label class="span-2">
     <span>名称</span>
     <input name="title" required autofocus placeholder="例如：数学练习册第 12 页">
@@ -42,6 +57,14 @@
   <label class="span-2">
     <span>备注（可选）</span>
     <textarea name="notes" rows="3" placeholder="需要携带的物品或补充说明"></textarea>
+  </label>
+  <input type="hidden" name="finish_check_present" value="1">
+  <label class="check-row span-2">
+    <input type="checkbox" name="include_in_finish_check" checked>
+    <span>
+      <strong>结束学习时询问这项</strong>
+      <small>取消勾选后仍会保留在日程和首次简报中，但结束学习时不会询问。</small>
+    </span>
   </label>
   <div class="form-actions span-2">
     <a class="button" href="/schedule">取消</a>

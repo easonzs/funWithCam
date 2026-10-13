@@ -16,7 +16,7 @@
 {% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
 
 <nav class="tab-list" aria-label="日程分类">
-  <a href="/schedule" {% if tab == 'today' %}aria-current="page"{% endif %}>今日安排</a>
+  <a href="/schedule" {% if tab == 'today' %}aria-current="page"{% endif %}>安排编辑</a>
   <a href="/schedule?tab=courses" {% if tab == 'courses' %}aria-current="page"{% endif %}>固定课程</a>
 </nav>
 
@@ -40,11 +40,30 @@
                 </span>
                 {% if item.scheduled_time %}<time>{{ item.scheduled_time }}</time>{% endif %}
                 {% if item.estimated_minutes %}<span>预计 {{ item.estimated_minutes }} 分钟</span>{% endif %}
+                {% if item.task_type_label %}<span>{{ item.task_type_label }}</span>{% endif %}
+                {% if item.task_type_label %}
+                  <span class="{% if item.include_in_finish_check %}finish-check-on{% else %}finish-check-off{% endif %}">
+                    {% if item.include_in_finish_check %}结束时询问{% else %}结束时不询问{% endif %}
+                  </span>
+                {% endif %}
+                {% if item.completion_evidence == 'child_confirmed' %}<span>孩子确认完成</span>
+                {% elif item.completion_evidence == 'video' %}<span>已有打卡视频</span>
+                {% elif item.completion_evidence == 'later' %}<span>稍后完成</span>
+                {% elif item.completion_evidence == 'skipped' %}<span>已跳过</span>{% endif %}
               </div>
               <h3>{{ item.title }}</h3>
               {% if item.notes %}<p>{{ item.notes }}</p>{% endif %}
             </div>
             <div class="row-actions">
+              {% if item.task_type_label and item.status != 'done' %}
+                <form method="post" action="/today/items/{{ item.id }}/finish-check">
+                  <input type="hidden" name="csrf" value="{{ csrf }}">
+                  <input type="hidden" name="enabled" value="{% if item.include_in_finish_check %}0{% else %}1{% endif %}">
+                  <button class="button button-small" type="submit">
+                    {% if item.include_in_finish_check %}结束时不问{% else %}结束时询问{% endif %}
+                  </button>
+                </form>
+              {% endif %}
               <form method="post" action="/today/items/{{ item.id }}/status">
                 <input type="hidden" name="csrf" value="{{ csrf }}">
                 <input type="hidden" name="status" value="{% if item.status == 'done' %}pending{% else %}done{% endif %}">

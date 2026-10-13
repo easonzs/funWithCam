@@ -57,9 +57,11 @@ class CalibrationCaptureResult:
     features: Optional[dict] = None
     quality: Optional[dict] = None
     camera_fingerprint: Optional[str] = None
+    diagnostics: Optional[dict] = None
 
     @property
     def message(self) -> str:
+        diagnostics = self.diagnostics or {}
         messages = {
             "video_unavailable": "没有稳定读取到摄像头画面，请检查视频流后重试",
             "multiple_people": "采集时检测到多人，请只让孩子留在书桌区域",
@@ -69,12 +71,60 @@ class CalibrationCaptureResult:
             "child_not_verified": (
                 "没有确认到孩子，请先面向摄像头再保持当前动作"
             ),
+            "pose_not_detected": (
+                "已经确认到孩子，但没有检测到稳定姿态关键点，请确保上半身在画面中"
+            ),
             "outside_study_area": "请让孩子坐在已配置的书桌区域内",
             "insufficient_samples": "有效姿态画面不足，请保持动作稳定并重试",
             "cancelled": "采集已取消",
             "system_error": "采集发生错误，请查看服务日志后重试",
         }
-        return messages.get(self.reason, "采集未完成，请重试")
+        message = messages.get(self.reason, "采集未完成，请重试")
+        if self.reason == "video_unavailable":
+            message = "在等待时间内没有读取到有效摄像头画面。{}".format(
+                _diagnostic_summary(diagnostics)
+            )
+        elif self.reason == "multiple_people":
+            message = "采集期间检测到多人（{}帧）。请只让孩子独自在画面中重试。".format(
+                diagnostics.get("multiple_people_frames", 0)
+            )
+        elif self.reason == "identity_changed":
+            message = "采集期间检测到身份变化，确认孩子后又识别到家长。请让孩子独自在画面中重试。"
+        elif self.reason == "child_not_verified":
+            message = (
+                "读取到{}帧画面，其中{}帧检测到人脸，但采集开始时没有完成孩子身份确认。"
+                "请先让孩子正对摄像头保持几秒，确认后再开始当前动作；写字或阅读时不要求持续露脸。"
+            ).format(
+                diagnostics.get("attempted_frames", 0),
+                diagnostics.get("face_detected_frames", 0),
+            )
+        elif self.reason == "outside_study_area":
+            message = (
+                "已经确认是孩子，但{}帧有效姿态都不在已配置的书桌区域内。"
+                "请让孩子坐回书桌区域后重试。"
+            ).format(diagnostics.get("pose_detected_frames", 0))
+        elif self.reason == "pose_not_detected":
+            message = (
+                "已经确认是孩子，但尝试{}帧都没有检测到稳定姿态关键点。"
+                "请确保孩子的头部、肩膀和上半身在画面中，并保持动作稳定。"
+            ).format(diagnostics.get("attempted_frames", 0))
+        elif self.reason == "insufficient_samples":
+            message = (
+                "已经确认是孩子，但只获得{} / {}个有效姿态样本（尝试{}帧）。"
+                "请保持当前动作稳定，确保身体和书桌区域在画面中。"
+            ).format(
+                diagnostics.get("valid_samples", 0),
+                diagnostics.get("required_samples", 0),
+                diagnostics.get("attempted_frames", 0),
+            )
+        elif self.reason == "system_error":
+            detail = str(diagnostics.get("error", "")).strip()
+            if detail:
+                message = "采集程序发生{}：{}。请根据此原因处理后重试。".format(
+                    diagnostics.get("exception_type", "异常"),
+                    detail[:240],
+                )
+        return message
 
     def as_repository_payload(self) -> dict:
         if not self.passed:
@@ -147,7 +197,9 @@ class CameraCalibrationRunner:
         config = self._config
         _speak_safely(
             config.audio.command,
-            CALIBRATION_STEP_BY_KEY[step]["speech"],
+            "请先正对摄像头保持几秒，完成身份确认，然后{}".format(
+                CALIBRATION_STEP_BY_KEY[step]["speech"]
+            ),
         )
         capture = LatestFrameCapture(
             config.video.stream_url,
@@ -174,9 +226,13 @@ class CameraCalibrationRunner:
         samples: list[CalibrationSample] = []
         attempts = 0
         multiple_people = False
+        multiple_people_frames = 0
         child_verified = False
         identity_changed = False
         child_scores: list[float] = []
+        face_detected_frames = 0
+        pose_detected_frames = 0
+        outside_study_area_frames = 0
         last_frame_at = None
         started_at = time.monotonic()
         connection_deadline = (
@@ -199,15 +255,15 @@ class CameraCalibrationRunner:
                     stop_event.wait(interval)
                     continue
                 last_frame_at = latest.captured_monotonic_at
-                if sample_deadline is None:
-                    sample_deadline = now + config.calibration.duration_seconds
                 attempts += 1
                 face_result = faces.detect_one(latest.frame)
                 if len(face_result.faces) > 1:
                     multiple_people = True
+                    multiple_people_frames += 1
                     stop_event.wait(interval)
                     continue
                 if face_result.face is not None:
+                    face_detected_frames += 1
                     match = matcher.match(
                         recognizer.extract(latest.frame, face_result.face)
                     )
@@ -227,6 +283,8 @@ class CameraCalibrationRunner:
                             verification.confirmed
                             and verification.identity == "child"
                         )
+                        if child_verified:
+                            sample_deadline = now + config.calibration.duration_seconds
                 if not child_verified:
                     stop_event.wait(interval)
                     continue
@@ -235,8 +293,10 @@ class CameraCalibrationRunner:
                 if pose_result is None:
                     stop_event.wait(interval)
                     continue
+                pose_detected_frames += 1
                 features, points, visibility = pose_result
                 if not _inside_study_area(features, config):
+                    outside_study_area_frames += 1
                     stop_event.wait(interval)
                     continue
                 features["brightness"] = calculate_brightness(
@@ -257,19 +317,57 @@ class CameraCalibrationRunner:
             pose.close()
             capture.close()
 
+        diagnostics = {
+            "attempted_frames": attempts,
+            "multiple_people_frames": multiple_people_frames,
+            "face_detected_frames": face_detected_frames,
+            "pose_detected_frames": pose_detected_frames,
+            "outside_study_area_frames": outside_study_area_frames,
+            "valid_samples": len(samples),
+            "required_samples": config.calibration.min_valid_samples,
+        }
         if stop_event.is_set():
-            return CalibrationCaptureResult(False, "cancelled")
+            return CalibrationCaptureResult(
+                False,
+                "cancelled",
+                diagnostics=diagnostics,
+            )
         if sample_deadline is None:
-            return CalibrationCaptureResult(False, "video_unavailable")
+            return CalibrationCaptureResult(
+                False,
+                "video_unavailable",
+                diagnostics=diagnostics,
+            )
         if multiple_people:
-            return CalibrationCaptureResult(False, "multiple_people")
+            return CalibrationCaptureResult(
+                False,
+                "multiple_people",
+                diagnostics=diagnostics,
+            )
         if identity_changed:
-            return CalibrationCaptureResult(False, "identity_changed")
+            return CalibrationCaptureResult(
+                False,
+                "identity_changed",
+                diagnostics=diagnostics,
+            )
         if not child_verified:
-            return CalibrationCaptureResult(False, "child_not_verified")
+            return CalibrationCaptureResult(
+                False,
+                "child_not_verified",
+                diagnostics=diagnostics,
+            )
         if len(samples) < config.calibration.min_valid_samples:
-            reason = "outside_study_area" if not samples else "insufficient_samples"
-            return CalibrationCaptureResult(False, reason)
+            if not samples and pose_detected_frames == 0:
+                reason = "pose_not_detected"
+            elif not samples:
+                reason = "outside_study_area"
+            else:
+                reason = "insufficient_samples"
+            return CalibrationCaptureResult(
+                False,
+                reason,
+                diagnostics=diagnostics,
+            )
 
         feature_summary = summarize_features(
             [sample.features for sample in samples]
@@ -336,10 +434,12 @@ class CalibrationCoordinator:
             [str, str, threading.Event],
             CalibrationCaptureResult,
         ],
+        assistant_pause_timeout: float = 6.0,
     ):
         self._repository = repository
         self._timezone = timezone
         self._runner = runner
+        self._assistant_pause_timeout = assistant_pause_timeout
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -350,15 +450,19 @@ class CalibrationCoordinator:
                 raise ValueError("另一个基准步骤正在采集")
             self._repository.mark_capturing(draft_id, step, now)
             set_calibration_active(True)
-            if not wait_for_assistant_pause(3.0):
+            if not wait_for_assistant_pause(self._assistant_pause_timeout):
                 set_calibration_active(False)
+                message = (
+                    "日常视觉检测未能在 {:.1f} 秒内释放摄像头，"
+                    "通常是视频流读取阻塞，请检查 go2rtc 后重试"
+                ).format(self._assistant_pause_timeout)
                 self._repository.fail_capture(
                     draft_id,
                     step,
-                    "日常视觉检测尚未暂停，请稍后重试",
+                    message,
                     now,
                 )
-                raise ValueError("日常视觉检测尚未暂停，请稍后重试")
+                raise ValueError(message)
             self._thread = threading.Thread(
                 target=self._run,
                 args=(draft_id, step),
@@ -377,9 +481,16 @@ class CalibrationCoordinator:
         try:
             try:
                 result = self._runner(draft_id, step, self._stop_event)
-            except Exception:
+            except Exception as exc:
                 LOGGER.exception("calibration capture failed unexpectedly")
-                result = CalibrationCaptureResult(False, "system_error")
+                result = CalibrationCaptureResult(
+                    False,
+                    "system_error",
+                    diagnostics={
+                        "exception_type": type(exc).__name__,
+                        "error": str(exc) or repr(exc),
+                    },
+                )
             now = datetime.now(self._timezone)
             try:
                 if result.passed:
@@ -405,6 +516,10 @@ class CalibrationCoordinator:
                         CalibrationCaptureResult(
                             False,
                             "system_error",
+                            diagnostics={
+                                "exception_type": "PersistenceError",
+                                "error": "无法保存采集结果",
+                            },
                         ).message,
                         now,
                     )
@@ -412,6 +527,13 @@ class CalibrationCoordinator:
                     LOGGER.exception("unable to persist calibration failure")
         finally:
             set_calibration_active(False)
+
+
+def _diagnostic_summary(diagnostics: dict) -> str:
+    attempts = diagnostics.get("attempted_frames", 0)
+    if attempts:
+        return "已尝试读取{}帧，但没有形成可用采集画面。".format(attempts)
+    return "请确认 go2rtc 视频流已启动且地址可访问。"
 
 
 class _PoseFeatureExtractor:

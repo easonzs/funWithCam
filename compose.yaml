@@ -1,0 +1,49 @@
+name: funwithcam
+
+services:
+  go2rtc:
+    image: ${GO2RTC_IMAGE:-alexxit/go2rtc:1.9.14}
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "127.0.0.1:${GO2RTC_API_PORT:-1984}:1984"
+      - "127.0.0.1:${GO2RTC_RTSP_PORT:-8554}:8554"
+    volumes:
+      - ./runtime/config/go2rtc.yaml:/config/go2rtc.yaml
+      - ./runtime/audio:/media:ro
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:1984/api/streams
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  funwithcam:
+    image: ${FUNWITHCAM_IMAGE:-ghcr.io/easonzs/funwithcam:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    depends_on:
+      go2rtc:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      FUNWITHCAM_GO2RTC_API: http://go2rtc:1984
+      FUNWITHCAM_GO2RTC_STREAM: study_room
+      FUNWITHCAM_AUDIO_DIR: /app/audio
+      FUNWITHCAM_GO2RTC_AUDIO_DIR: /media
+    ports:
+      - "${WEB_BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8000}:8000"
+    volumes:
+      - ./runtime/config/funwithcam.yaml:/app/config/config.yaml:ro
+      - ./runtime/data:/app/data
+      - ./runtime/audio:/app/audio

@@ -114,6 +114,64 @@ class ReminderPlanTest(unittest.TestCase):
             message,
         )
 
+    def test_custom_template_receives_schedule_variables(self):
+        target_date = date(2026, 10, 12)
+        plan = build_reminder_plan(
+            target_date,
+            TIMEZONE,
+            {
+                "day_type": "school_day",
+                "second_reminder_mode": "default",
+                "second_reminder_time": None,
+                "homework_reminders_enabled": 1,
+            },
+            SETTINGS,
+        )
+
+        message = build_briefing_message(
+            [
+                {
+                    "item_type": "homework",
+                    "title": "数学练习册",
+                    "status": "pending",
+                    "scheduled_time": None,
+                    "preparation_minutes": 0,
+                }
+            ],
+            [
+                {
+                    "name": "英语课",
+                    "start_time": "19:00",
+                    "preparation_minutes": 10,
+                }
+            ],
+            plan,
+            datetime(2026, 10, 12, 17, 0, tzinfo=TIMEZONE),
+            "小明",
+            "{孩子称呼}|{今天安排简报}|{下一次提醒时间}",
+        )
+
+        self.assertEqual(
+            "小明|今天19点有英语课，需要提前10分钟准备。今天有数学练习册。|18点10分",
+            message,
+        )
+
+    def test_custom_second_template_receives_pending_tasks(self):
+        message = build_second_reminder_message(
+            [
+                {
+                    "item_type": "homework",
+                    "title": "语文背诵",
+                    "status": "pending",
+                }
+            ],
+            datetime(2026, 10, 12, 18, 10, tzinfo=TIMEZONE),
+            "小明",
+            "{孩子称呼}|{当前时间}|{待完成任务列表}",
+        )
+
+        self.assertEqual("小明|18点10分|语文背诵", message)
+
 
 class ReminderRepositoryTest(unittest.TestCase):
     def test_records_first_and_second_reminder_once(self):

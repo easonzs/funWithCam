@@ -1,0 +1,74 @@
+timezone: Asia/Shanghai
+
+video:
+  stream_url: rtsp://go2rtc:8554/study_room
+  inference_fps: 4
+  reconnect_seconds: 3
+  max_frame_age_seconds: 2
+  warmup_seconds: 1.5
+
+study_area:
+  rect: [0.20, 0.15, 0.80, 0.95]
+
+person:
+  min_detection_confidence: 0.60
+  min_bbox_area_ratio: 0.03
+  max_bbox_area_ratio: 0.65
+
+presence:
+  confirm_seconds: 5
+  allowed_missed_seconds: 1
+  max_center_jump: 0.20
+
+precheck:
+  duration_seconds: 5
+  timeout_seconds: 15
+  min_valid_frame_ratio: 0.80
+  min_brightness: 45
+
+calibration:
+  duration_seconds: 10
+  timeout_seconds: 25
+  min_valid_samples: 12
+  image_dir: data/calibrations
+
+audio:
+  # 在容器内生成离线中文语音，再通过 go2rtc 尝试推送到摄像头扬声器。
+  # 小米摄像头的实际播放能力仍需在家庭局域网内完成端到端验证。
+  command: ["funwithcam-camera-speak", "{text}"]
+  camera_test_text: "摄像头人物检测和语音播放测试成功。"
+
+speech:
+  enabled: true
+  input_source: camera
+  model_path: models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
+  sample_rate: 48000
+  block_size: 8000
+  device:
+  command_cooldown_seconds: 2
+
+identity:
+  detector_model: models/face_detection_yunet_2023mar.onnx
+  recognizer_model: models/face_recognition_sface_2021dec.onnx
+  detection_threshold: 0.85
+  nms_threshold: 0.30
+  min_face_size_px: 80
+  match_threshold: 0.45
+  ambiguity_margin: 0.08
+  confirmation_frames: 3
+  confirmation_window_seconds: 3
+  enrollment_samples: 9
+  sample_interval_seconds: 0.7
+  command_timeout_seconds: 60
+  save_debug_frames: true
+  debug_dir: data/face_debug
+  debug_face_limit: 30
+  debug_rejected_limit: 10
+
+web:
+  host: 0.0.0.0
+  port: 8000
+  session_hours: 24
+
+logging:
+  level: INFO

@@ -3,20 +3,27 @@
 {% block app_content %}
 <header class="page-heading">
   <div>
-    <h1>学习记录</h1>
-    <p class="page-description">这里只展示已经真实记录的数据，不对孩子做综合评分。</p>
+    <h1>记录</h1>
+    <p class="page-description">查看学习统计和每天系统执行过的动作，只展示已经真实记录的数据。</p>
   </div>
 </header>
 
 <nav class="tab-list" aria-label="记录类型">
-  <a href="/records" aria-current="page">学习记录</a>
+  <a href="/records" aria-current="page">学习统计</a>
   <a href="/history">执行历史</a>
 </nav>
+
+<section class="record-metrics" aria-label="本周学习摘要">
+  <div class="metric-item"><span>本周学习次数</span><strong>{{ record_metrics.week_sessions }}</strong></div>
+  <div class="metric-item"><span>平均学习时长</span><strong>{% if record_metrics.average_minutes is not none %}{{ record_metrics.average_minutes }} 分钟{% else %}—{% endif %}</strong></div>
+  <div class="metric-item"><span>平均离座次数</span><strong>{{ record_metrics.average_away }}</strong></div>
+  <div class="metric-item"><span>姿势异常趋势</span><strong>{{ record_metrics.posture_trend }}</strong></div>
+</section>
 
 <section class="content-section records-section" aria-labelledby="records-title">
   <div class="section-heading">
     <div>
-      <h2 id="records-title">最近的学习</h2>
+      <h2 id="records-title">学习统计明细</h2>
       <p>学习时长只统计处于“学习记录中”的时间，不包含暂停。</p>
     </div>
   </div>

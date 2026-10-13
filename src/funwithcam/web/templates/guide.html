@@ -1,0 +1,117 @@
+{% extends "app_shell.html" %}
+{% block title %}使用说明 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>使用说明</h1>
+    <p class="page-description">按家庭中的真实场景了解系统何时观察、何时询问，以及哪些判断仍需要孩子或家长确认。</p>
+  </div>
+</header>
+
+<nav class="guide-index" aria-label="场景目录">
+  <a href="#arrival">到家与首次简报</a>
+  <a href="#start">开始学习</a>
+  <a href="#away">学习中离座</a>
+  <a href="#finish">结束与检查</a>
+  <a href="#checkin">视频打卡</a>
+  <a href="#calibration">动作基准</a>
+</nav>
+
+<div class="guide-sections">
+  <section id="arrival" class="guide-section">
+    <div class="guide-heading">
+      <div>
+        <h2>到家与首次简报</h2>
+        <p>适合工作日放学后或休息日第一次来到书桌附近时。</p>
+      </div>
+      <span class="capability-state capability-ready">已支持</span>
+    </div>
+    <ol class="scene-flow">
+      <li><strong>到达配置时间</strong><span>系统开始等待书桌区域有人稳定出现，不会到点就对空房间播报。</span></li>
+      <li><strong>确认是孩子</strong><span>多帧人脸确认；家长、陌生人或多人画面不会触发。</span></li>
+      <li><strong>播报今日安排</strong><span>包含当天课程、学校作业和下一次提醒时间。</span></li>
+    </ol>
+  </section>
+
+  <section id="start" class="guide-section">
+    <div class="guide-heading">
+      <div>
+        <h2>开始学习</h2>
+        <p>孩子吃完饭、准备开始后，可以使用语音或家长 Web 按钮。</p>
+      </div>
+      <span class="capability-state capability-ready">已支持</span>
+    </div>
+    <div class="linear-flow" aria-label="开始学习流程">
+      <span>说“开始学习”</span><b>→</b><span>检查画面、身份与光线</span><b>→</b><span>建立学习记录</span>
+    </div>
+    <p class="guide-note">明确默认口令可以直接执行；关键词组合或高影响操作会先告诉孩子可回答的确认口令。</p>
+  </section>
+
+  <section id="away" class="guide-section">
+    <div class="guide-heading">
+      <div>
+        <h2>学习中离开书桌</h2>
+        <p>系统会记录离座并在达到阈值后自动暂停，但不会仅凭离座判断作业已经完成。</p>
+      </div>
+      <span class="capability-state capability-ready">视觉监测已支持</span>
+    </div>
+    <div class="state-flow" aria-label="离座后的状态流程">
+      <div class="state-node"><strong>正在学习</strong><span>保持学习记录</span></div>
+      <div class="state-arrow">离开书桌超过配置阈值 ↓</div>
+      <div class="state-node"><strong>暂时离开 / 自动暂停</strong><span>不判定为正常结束</span></div>
+      <div class="state-arrow">孩子重新回来并确认身份 ↓</div>
+      <div class="state-node state-question"><strong>询问：继续学习还是结束学习？</strong><span>播报可明确回复的口令</span></div>
+      <div class="state-branches">
+        <div><strong>继续学习</strong><span>开始前检查 → 恢复学习</span></div>
+        <div><strong>结束学习</strong><span>进入当天完成情况检查</span></div>
+        <div><strong>没有回答</strong><span>有限次数重问 → 保持暂停</span></div>
+      </div>
+    </div>
+    <p class="guide-warning">持续离座后的自动暂停已经生效；暂停后视觉监测会停止。孩子回来后自动发起“继续还是结束”的询问仍待后续接入，目前可用语音或 Web 主动继续。</p>
+  </section>
+
+  <section id="finish" class="guide-section">
+    <div class="guide-heading">
+      <div>
+        <h2>结束学习与完成情况检查</h2>
+        <p>“结束学习”不是立即关掉记录，而是先核对今天实际录入的待完成任务。</p>
+      </div>
+      <span class="capability-state capability-ready">语音流程已支持</span>
+    </div>
+    <ol class="scene-flow">
+      <li><strong>确认结束意图</strong><span>孩子回答“检查完成情况”或“继续学习”。</span></li>
+      <li><strong>逐项询问</strong><span>学校作业可由孩子确认；视频任务必须有打卡视频；家长确认型任务只能在 Web 完成。</span></li>
+      <li><strong>记录证据并结束</strong><span>保留完成、稍后、跳过和视频等不同结果，便于回溯。</span></li>
+    </ol>
+  </section>
+
+  <section id="checkin" class="guide-section">
+    <div class="guide-heading">
+      <div>
+        <h2>英语、古诗等视频打卡</h2>
+        <p>用于需要保留朗读或背诵视频的任务。</p>
+      </div>
+      <span class="capability-state capability-ready">已支持</span>
+    </div>
+    <div class="linear-flow linear-flow-wrap" aria-label="视频打卡流程">
+      <span>说出打卡名称</span><b>→</b><span>准备材料</span><b>→</b><span>说“开始打卡”</span><b>→</b><span>说“打卡结束”</span><b>→</b><span>本地保存视频</span>
+    </div>
+    <p class="guide-note">达到配置的最长录制时间会自动保存。准备、开始、保存、取消和失败原因都会进入执行历史。</p>
+  </section>
+
+  <section id="calibration" class="guide-section">
+    <div class="guide-heading">
+      <div>
+        <h2>动作与光线基准</h2>
+        <p>家长首次部署或调整摄像头位置、书桌位置后重新录入。</p>
+      </div>
+      <span class="capability-state capability-ready">已支持</span>
+    </div>
+    <ol class="scene-flow">
+      <li><strong>一次身份确认</strong><span>孩子先短暂正对摄像头。</span></li>
+      <li><strong>采集真实动作</strong><span>依次采集舒服坐姿、正常写字、正常阅读和正常光线；低头写字不要求持续看到正脸。</span></li>
+      <li><strong>家长检查图片</strong><span>查看原图和标注图，确认符合要求后发布新基准。</span></li>
+    </ol>
+  </section>
+</div>
+{% endblock %}

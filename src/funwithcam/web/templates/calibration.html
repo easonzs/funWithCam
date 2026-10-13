@@ -6,7 +6,7 @@
     <a class="back-link" href="/settings">← 返回设置</a>
     <p class="eyebrow">一次录入，后续长期使用</p>
     <h1>录入孩子的动作基准</h1>
-    <p>每一步会采集约 10 秒，从多帧画面计算正常范围。家长确认图片后，基准才会生效。</p>
+    <p>每一步会先确认孩子身份，再采集约 10 秒动作画面。确认身份后，写字和阅读时不要求持续露脸。家长确认图片后，基准才会生效。</p>
   </header>
 
   {% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
@@ -108,12 +108,13 @@
               <div class="capture-status" role="status">
                 <span class="capture-pulse" aria-hidden="true"></span>
                 <strong>正在采集</strong>
-                <p>通常需要约 10 秒，请让孩子保持自然动作。</p>
+              <p>请先正对摄像头保持几秒，完成身份确认后再保持自然动作；写字和阅读时不要求持续露脸。</p>
               </div>
             {% elif draft.status == 'error' %}
               <div class="capture-status">
                 <span class="capture-error-mark" aria-hidden="true">!</span>
                 <strong>这一步没有采集成功</strong>
+                <span class="capture-error-label">失败原因</span>
                 <p>{{ draft.error_message }}</p>
               </div>
             {% else %}
@@ -174,7 +175,7 @@
           {% elif draft.status == 'error' %}
             <div class="tip-panel">
               <strong>重试前建议</strong>
-              <p>让家长退出画面，孩子先看向摄像头，再按当前步骤保持自然动作。</p>
+              <p>让家长退出画面，孩子先正对摄像头保持几秒完成身份确认，再按当前步骤保持自然动作。写字和阅读时不要求持续露脸。</p>
             </div>
             <form method="post" action="/calibration/retry">
               <input type="hidden" name="csrf" value="{{ csrf }}">

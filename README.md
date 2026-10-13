@@ -28,6 +28,10 @@ FunWithCam 是一个运行在家庭局域网内的本地学习助理。
 - 多帧计算正常范围，并保存可切换查看的原图和标注图；
 - 基准草稿、历史版本和学习记录所用版本关联；
 - 可选的 sherpa-onnx 本地中文语音口令；
+- Web 可配置的受控语义匹配、确认话术与重复询问频次；
+- 结合当天日程的结束学习逐项检查；
+- 可配置学校作业、视频打卡和家长确认任务类型；
+- go2rtc 视频与音频打卡录制、最长时长自动保存和执行历史；
 - 单元测试。
 
 ## 本地开发
@@ -178,14 +182,17 @@ funwithcam speech-test --config config/config.yaml
 
 当前支持：
 
-- “开始写作业”“开始学习”“开始记录”；
+- “开始作业”“开始写作业”“开始学习”“开始记录”；
 - “我要休息”“休息一下”；
 - “继续学习”“继续写作业”；
 - “结束学习”“作业写完了”；
 - “今天有什么作业”；
-- “今天有什么课”“今天几点上课”。
+- “今天有什么课”“今天几点上课”；
+- “英语单词打卡”“英语读书打卡”“古诗打卡”。
 
 系统使用半双工方式工作：本地 `say` 播报期间不把麦克风音频送入识别器。
+家长可以在“语音口令”页面配置明确说法、关键词组合和二次确认规则，在
+“交互与任务”页面配置重问频次、任务类型、完成证据和视频最长时长。
 
 ## 人脸身份
 
@@ -278,17 +285,54 @@ funwithcam serve \
 - 第二次提醒晚于计划超过 30 分钟，或计划时间早于实际首次简报时，不补播旧提醒；
 - 未启用本地语音识别时仍可使用 Web 按钮控制学习记录。
 
-诊断时也可以只运行摄像头提醒服务：
+## Docker 部署到另一台 Mac
+
+冷启动只需要 Docker Desktop 和 Git。新 Mac 不安装 Python、OpenCV、
+MediaPipe、FFmpeg 或语音模型，也不执行 `docker save`：
 
 ```bash
-funwithcam assistant-run \
-  --config config/config.yaml \
-  --database data/funwithcam.db
+git clone git@github.com:easonzs/funWithCam.git
+cd funWithCam
+./deploy.sh
 ```
+
+脚本默认从 `ghcr.io/easonzs/funwithcam:latest` 拉取正式镜像，生成 `.env`，
+保留宿主机 `runtime/` 家庭数据，引导通过 go2rtc WebUI 配置小米摄像头，
+创建 `parent` 家长账号，并实际检查 `study_room` 的视频和音频轨道。
+
+开发者需要从当前源码构建时才使用：
+
+```bash
+./deploy.sh --build
+```
+
+发布新代码后，新 Mac 更新使用：
+
+```bash
+./update.sh
+```
+
+不要进入运行中的容器覆盖代码。完整的镜像来源、GHCR 首次公开设置、配置保存
+位置和故障处理见 `docs/DOCKER_COLD_START.md`。
+
+常用诊断命令：
+
+```bash
+docker compose ps
+docker compose logs -f
+./scripts/diagnose.sh
+```
+
+迁移模式暂未并入一键脚本，当前新 Mac 按冷启动重新配置。
 
 ## 文档
 
 - `PRODUCT.md`
 - `docs/PRODUCT_LOGIC.md`
 - `docs/TECHNICAL_DESIGN.md`
+- `docs/PRODUCT_DECISIONS_2026-10-10_TO_12.md`：最近两天讨论形成的产品决策、
+  已确认边界和待开发项；
+- `docs/INTERACTION_TECHNICAL_DESIGN.md`：受控语义匹配、持久化对话、结束检查
+  和视频打卡实现。
+- `docs/DOCKER_COLD_START.md`：新 Mac 冷启动、镜像发布、更新和数据位置。
 

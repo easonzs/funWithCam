@@ -1,0 +1,82 @@
+{% extends "app_shell.html" %}
+{% block title %}系统话术 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>系统话术</h1>
+    <p class="page-description">配置系统在真实触发场景下会说什么。日程内容由系统运行时自动代入，不需要在这里重复录入。</p>
+  </div>
+</header>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="settings-section" aria-labelledby="variable-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="variable-title">变量从哪里来</h2>
+      <p>模板只保存表达方式；变量值由家庭设置、今日安排和触发时的运行状态生成。</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr><th>变量</th><th>来源</th><th>生成方式</th></tr>
+      </thead>
+      <tbody>
+        {% for name, source in variables.items() %}
+        <tr>
+          <th scope="row"><code>{{ "{" }}{{ name }}{{ "}" }}</code></th>
+          <td>{{ source[0] }}</td>
+          <td>{{ source[1] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="field-help">今天的示例预览日期：{{ today.strftime('%Y年%m月%d日') }}。系统不会读取 Mac 日历。</p>
+</section>
+
+<section aria-labelledby="template-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="template-title">事件话术模板</h2>
+      <p>每条模板都绑定一个真实事件。修改后保存，下一次事件触发时立即使用。</p>
+    </div>
+  </div>
+  <div class="template-list">
+    {% for item in templates %}
+    <article class="template-editor">
+      <div class="template-editor-heading">
+        <div>
+          <h3>{{ item.label }}</h3>
+          <p>{{ item.trigger_description }}</p>
+        </div>
+        <span class="status-chip {% if item.runtime_supported and item.enabled %}is-ready{% else %}is-unavailable{% endif %}">
+          {% if not item.runtime_supported %}事件接入中{% elif item.enabled %}已启用{% else %}已停用{% endif %}
+        </span>
+      </div>
+      <form method="post" action="/speech-templates/{{ item.event_key }}" class="template-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>
+          <span>模板内容</span>
+          <textarea name="template_text" rows="4" required>{{ item.template_text }}</textarea>
+          <small class="field-help">可用变量：{% for name in variables %}<code>{{ "{" }}{{ name }}{{ "}" }}</code>{% if not loop.last %}、{% endif %}{% endfor %}</small>
+        </label>
+          <label class="check-row">
+          <input type="checkbox" name="enabled" {% if item.enabled %}checked{% endif %}>
+            <span><strong>{% if item.runtime_supported %}启用此事件话术{% else %}保存此事件话术模板{% endif %}</strong><small>{% if item.runtime_supported %}停用后保留模板，但触发时不会播放这条话术。{% else %}当前事件还未接入运行时，模板可先保存，接入后再生效。{% endif %}</small></span>
+        </label>
+        <div class="template-preview">
+          <strong>当前示例下的实际播报</strong>
+          <p>{{ item.preview }}</p>
+        </div>
+        <div class="form-actions">
+          <button class="button button-primary" type="submit">保存 {{ item.label }}</button>
+        </div>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -112,6 +112,14 @@ class SpeechTest(unittest.TestCase):
         )
         self.assertIn("ignored", {event["status"] for event in events})
         self.assertIn("failed", {event["status"] for event in events})
+        self.assertEqual(
+            {"macbook_microphone"},
+            {
+                event["source"]
+                for event in events
+                if event["event_type"] == "speech_input"
+            },
+        )
         audio_output.return_value.speak.assert_called_once()
 
     def test_camera_audio_command_decodes_rtsp_audio_for_speech(self):
