@@ -97,7 +97,7 @@ def run_assistant(
     pose = None
     presence = PresenceMonitor(config.study_area, config.person, config.presence)
     capture = None
-    audio = AudioOutput(config.audio.command)
+    audio = AudioOutput.from_config(config.audio)
     study_monitor = StudyMonitor(
         config,
         activities,
@@ -300,7 +300,7 @@ def run_assistant(
                 datetime.now(timezone),
                 "reminder",
                 "first_briefing",
-                "assistant",
+                audio.source,
                 "success",
                 "首次提醒已播放",
                 message,
@@ -387,7 +387,7 @@ def _process_second_reminder(
         datetime.now(timezone),
         "reminder",
         "second_reminder",
-        "scheduler",
+        audio.source,
         "success",
         "第二次提醒已播放",
         message,

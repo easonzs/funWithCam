@@ -39,8 +39,14 @@ calibration:
   image_dir: data/calibrations
 
 audio:
+  # macbook 使用本机 say；camera 通过 go2rtc 的双向音频从摄像头播放。
+  output_source: macbook
   command: ["say", "{text}"]
   camera_test_text: "摄像头人物检测和语音播放测试成功。"
+  camera_api_url: http://127.0.0.1:1984
+  camera_stream: study_room
+  camera_audio_dir: data/audio
+  camera_go2rtc_audio_dir: data/audio
 
 speech:
   enabled: false

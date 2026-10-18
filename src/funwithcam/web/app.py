@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import subprocess
 import threading
 from contextlib import asynccontextmanager
 from datetime import date, datetime
@@ -12,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from funwithcam.audio import AudioOutput
 from funwithcam.assistant_service import (
     FormalIdentityMissingError,
     run_assistant,
@@ -25,6 +28,7 @@ from funwithcam.calibration_steps import (
     CALIBRATION_STEP_BY_KEY,
     CALIBRATION_STEPS,
 )
+from funwithcam.camera_speaker import inspect_camera_speaker
 from funwithcam.config import load_config
 from funwithcam.identity.repository import FaceProfileRepository
 from funwithcam.precheck import (
@@ -107,6 +111,8 @@ ACTIVITY_SOURCE_LABELS = {
     "assistant": "系统",
     "camera": "摄像头",
     "camera_audio": "摄像头麦克风",
+    "camera_speaker": "摄像头扬声器",
+    "macbook_speaker": "MacBook 扬声器",
     "microphone": "MacBook 麦克风",
     "macbook_microphone": "MacBook 麦克风",
     "scheduler": "定时任务",
@@ -768,23 +774,47 @@ def create_app(
                 if config.speech.input_source == "camera"
                 else "MacBook 麦克风"
             )
+            output_source = (
+                "摄像头扬声器"
+                if config.audio.output_source == "camera"
+                else "MacBook 扬声器"
+            )
+            device_rows = [
+                ("视频流", "go2rtc 视频地址", "已配置" if config.video.stream_url.strip() else "未配置", "Camera"),
+                ("语音输入", "当前收音来源", input_source, "已启用" if config.speech.enabled else "未启用"),
+                ("语音输出", "当前播报出口", output_source, "已启用"),
+                ("视觉观察", "姿态、亮度和离座判断", settings["observation_interval_seconds"] + " 秒采样", "已配置"),
+            ]
+            speaker_status = None
+            if config.audio.output_source == "camera":
+                speaker_status = inspect_camera_speaker(
+                    config.audio.camera_api_url,
+                    config.audio.camera_stream,
+                )
+                device_rows.insert(
+                    3,
+                    (
+                        "摄像头反向音频",
+                        "go2rtc 向摄像头发送声音",
+                        speaker_status.detail,
+                        "可用" if speaker_status.available else "待检查",
+                    ),
+                )
             return render_page(
                 request,
                 "config_section.html",
                 session,
                 "config",
-                title="摄像头与收音",
+                title="摄像头与声音",
                 description="集中查看视频流、语音输入、语音输出和视觉采样的真实配置状态。",
                 scope="这里只解释设备来源和运行条件；异常详情请查看记录。",
                 status="Web 服务正常",
-                config_rows=[
-                    ("视频流", "go2rtc 视频地址", "已配置" if config.video.stream_url.strip() else "未配置", "Camera"),
-                    ("语音输入", "当前收音来源", input_source, "已启用" if config.speech.enabled else "未启用"),
-                    ("语音输出", "本地 say 播报", "MacBook 本地输出", "已启用"),
-                    ("视觉观察", "姿态、亮度和离座判断", settings["observation_interval_seconds"] + " 秒采样", "已配置"),
-                ],
+                config_rows=device_rows,
                 primary_link="/health",
                 primary_label="查看服务健康状态",
+                audio_test_enabled=True,
+                audio_test_text=config.audio.camera_test_text,
+                audio_output_source=output_source,
                 **context,
             )
         if section == "privacy":
@@ -837,6 +867,7 @@ def create_app(
                 ],
                 **context,
             )
+
         if section == "start":
             return render_page(
                 request,
@@ -910,6 +941,47 @@ def create_app(
             )
 
         raise HTTPException(status_code=404, detail="configuration section not found")
+
+    @app.post("/config/device/audio-test")
+    async def test_audio_output(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        audio = AudioOutput.from_config(config.audio)
+        now = datetime.now(timezone)
+        try:
+            await asyncio.to_thread(
+                audio.speak,
+                config.audio.camera_test_text,
+            )
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            activities.record(
+                now,
+                "speech",
+                "speech_output_test",
+                audio.source,
+                "failed",
+                "语音输出测试失败",
+                str(exc),
+            )
+            return _redirect("/config/device", error=str(exc))
+        activities.record(
+            datetime.now(timezone),
+            "speech",
+            "speech_output_test",
+            audio.source,
+            "success",
+            "语音输出测试完成",
+            config.audio.camera_test_text,
+        )
+        return _redirect(
+            "/config/device",
+            message="测试语音已经发送到{}".format(
+                "摄像头扬声器"
+                if config.audio.output_source == "camera"
+                else "MacBook 扬声器"
+            ),
+        )
 
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(

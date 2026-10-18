@@ -47,6 +47,21 @@
 </section>
 {% endif %}
 
+{% if audio_test_enabled %}
+<section class="settings-section config-section" aria-labelledby="audio-test-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="audio-test-title">测试语音输出</h2>
+      <p>点击后会立即从{{ audio_output_source }}播放“{{ audio_test_text }}”，结果同时写入执行历史。</p>
+    </div>
+    <form method="post" action="/config/device/audio-test">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button button-primary" type="submit">播放测试语音</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+
 {% if source_rows %}
 <section class="settings-section config-section" aria-labelledby="source-rows-title">
   <div class="section-heading">

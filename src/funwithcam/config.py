@@ -49,8 +49,13 @@ class CalibrationConfig:
 
 @dataclass(frozen=True)
 class AudioConfig:
+    output_source: str
     command: Tuple[str, ...]
     camera_test_text: str
+    camera_api_url: str
+    camera_stream: str
+    camera_audio_dir: Path
+    camera_go2rtc_audio_dir: Path
 
 
 @dataclass(frozen=True)
@@ -249,6 +254,13 @@ def load_config(path: Path) -> AppConfig:
         raise ValueError("audio.command must be a non-empty list of strings")
     if "{text}" not in command:
         raise ValueError("audio.command must contain a {text} argument")
+    audio_output_source = str(
+        audio.get("output_source", "macbook")
+    ).strip().lower()
+    if audio_output_source not in {"macbook", "camera"}:
+        raise ValueError(
+            "audio.output_source must be macbook or camera"
+        )
 
     project_root = path.resolve().parent.parent
 
@@ -342,8 +354,26 @@ def load_config(path: Path) -> AppConfig:
             ),
         ),
         audio=AudioConfig(
+            output_source=audio_output_source,
             command=tuple(command),
             camera_test_text=str(_require(audio, "camera_test_text")),
+            camera_api_url=str(
+                audio.get("camera_api_url", "http://127.0.0.1:1984")
+            ).rstrip("/"),
+            camera_stream=str(
+                audio.get("camera_stream", "study_room")
+            ).strip(),
+            camera_audio_dir=_project_path(
+                project_root,
+                audio.get("camera_audio_dir", "data/audio"),
+            ),
+            camera_go2rtc_audio_dir=_project_path(
+                project_root,
+                audio.get(
+                    "camera_go2rtc_audio_dir",
+                    audio.get("camera_audio_dir", "data/audio"),
+                ),
+            ),
         ),
         speech=SpeechConfig(
             enabled=_boolean(_require(speech, "enabled"), "speech.enabled"),

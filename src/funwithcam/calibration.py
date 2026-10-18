@@ -196,7 +196,7 @@ class CameraCalibrationRunner:
             raise ValueError("unknown calibration step")
         config = self._config
         _speak_safely(
-            config.audio.command,
+            config.audio,
             "请先正对摄像头保持几秒，完成身份确认，然后{}".format(
                 CALIBRATION_STEP_BY_KEY[step]["speech"]
             ),
@@ -409,7 +409,7 @@ class CameraCalibrationRunner:
             ),
         }
         _speak_safely(
-            config.audio.command,
+            config.audio,
             "这一段采集完成，请家长确认。",
         )
         return CalibrationCaptureResult(
@@ -733,9 +733,9 @@ def _draw_line(cv2, frame, points, first: str, second: str) -> None:
         cv2.line(frame, points[first], points[second], (40, 170, 240), 2)
 
 
-def _speak_safely(command, text: str) -> None:
+def _speak_safely(audio_config, text: str) -> None:
     try:
-        AudioOutput(command).speak(text)
+        AudioOutput.from_config(audio_config).speak(text)
     except Exception:
         LOGGER.warning("unable to play calibration speech", exc_info=True)
 

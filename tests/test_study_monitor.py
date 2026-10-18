@@ -142,6 +142,7 @@ class FakeTemplates:
 class FakeAudio:
     def __init__(self):
         self.messages = []
+        self.source = "macbook_speaker"
 
     def speak(self, message):
         self.messages.append(message)

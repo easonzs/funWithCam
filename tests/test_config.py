@@ -85,6 +85,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(10, config.calibration.duration_seconds)
         self.assertEqual(12, config.calibration.min_valid_samples)
         self.assertEqual("calibrations", config.calibration.image_dir.name)
+        self.assertEqual("macbook", config.audio.output_source)
+        self.assertEqual("study_room", config.audio.camera_stream)
         self.assertEqual(3, config.identity.confirmation_frames)
         self.assertEqual("yunet.onnx", config.identity.detector_model.name)
         self.assertTrue(config.identity.save_debug_frames)
@@ -200,6 +202,30 @@ class ConfigTest(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 load_config(path)
+
+    def test_loads_camera_audio_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(
+                VALID_CONFIG.replace(
+                    'audio:\n  command: ["say", "{text}"]',
+                    'audio:\n  output_source: camera\n'
+                    '  command: ["say", "{text}"]\n'
+                    '  camera_api_url: http://go2rtc:1984\n'
+                    '  camera_stream: desk\n'
+                    '  camera_audio_dir: runtime/audio\n'
+                    '  camera_go2rtc_audio_dir: /media',
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+        self.assertEqual("camera", config.audio.output_source)
+        self.assertEqual("http://go2rtc:1984", config.audio.camera_api_url)
+        self.assertEqual("desk", config.audio.camera_stream)
+        self.assertEqual("audio", config.audio.camera_audio_dir.name)
+        self.assertEqual(Path("/media"), config.audio.camera_go2rtc_audio_dir)
 
 
 if __name__ == "__main__":

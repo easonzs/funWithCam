@@ -173,7 +173,7 @@ class SpeechCommandHandler:
         self._intents = SpeechIntentRepository(database)
         self._dialogues = DialogueRepository(database)
         self._checkins = CheckinRepository(database)
-        self._audio = AudioOutput(config.audio.command)
+        self._audio = AudioOutput.from_config(config.audio)
         self._prechecks = prechecks
         self._recorder = CheckinRecorder(
             config.video.stream_url,
@@ -905,7 +905,7 @@ class SpeechCommandHandler:
             datetime.now(self._timezone),
             "speech",
             "speech_output",
-            "assistant",
+            self._audio.source,
             status,
             "系统语音回复",
             message,

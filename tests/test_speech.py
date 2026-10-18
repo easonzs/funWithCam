@@ -93,6 +93,9 @@ class SpeechTest(unittest.TestCase):
                 PROJECT_ROOT / "config" / "config.example.yaml"
             )
             with patch("funwithcam.speech.AudioOutput") as audio_output:
+                audio_output.from_config.return_value.source = (
+                    "macbook_speaker"
+                )
                 handler = SpeechCommandHandler(
                     config,
                     database_path,
@@ -122,7 +125,7 @@ class SpeechTest(unittest.TestCase):
                 if event["event_type"] == "speech_input"
             },
         )
-        audio_output.return_value.speak.assert_called_once()
+        audio_output.from_config.return_value.speak.assert_called_once()
 
     def test_camera_audio_command_decodes_rtsp_audio_for_speech(self):
         command = _camera_audio_command(

@@ -13,7 +13,7 @@ FunWithCam 是一个运行在家庭局域网内的本地学习助理。
 - 当日工作流状态持久化；
 - go2rtc 视频流采集与断流重连；
 - MediaPipe 人物出现检测；
-- macOS `say` 语音输出；
+- 可切换的 MacBook `say` 或 go2rtc 摄像头扬声器语音输出；
 - 摄像头到语音输出的端到端测试命令；
 - YuNet + SFace 本地人脸录入和多帧身份验证；
 - 测试身份与正式身份隔离保存；
@@ -69,6 +69,29 @@ funwithcam camera-test --config config/config.yaml
 ```
 
 测试命令会在学习区域持续检测到人物后播放一次测试语音并退出。它不写入正式的每日提醒状态。
+
+### 语音输出位置
+
+`audio.output_source` 决定所有正式提醒、交互回复、基准录入提示和测试语音从哪里播放：
+
+```yaml
+audio:
+  # macbook：使用本机 say；camera：经 go2rtc 从摄像头扬声器播放。
+  output_source: camera
+  command: ["say", "{text}"]
+  camera_api_url: http://127.0.0.1:1984
+  camera_stream: study_room
+  camera_audio_dir: data/audio
+  camera_go2rtc_audio_dir: data/audio
+```
+
+本机运行时，两个音频目录可以指向同一个目录。Docker 中 FunWithCam 将
+`runtime/audio` 挂载为 `/app/audio`，go2rtc 将同一宿主机目录挂载为
+`/media`，因此分别配置为 `/app/audio` 和 `/media`。
+
+登录家长 Web 后可进入“配置 → 摄像头与声音”，查看当前输出出口和 go2rtc
+反向音频状态，并使用“播放测试语音”进行真实播放。成功或失败结果会写入执行
+历史，来源分别显示为“MacBook 扬声器”或“摄像头扬声器”。
 
 ## 家长 Web
 
@@ -170,7 +193,7 @@ speech:
 将 `input_source` 改为 `camera` 后，程序会通过 FFmpeg 从
 `video.stream_url` 读取摄像头音频，并转换为 16000Hz 单声道语音识别输入。
 camera 模式需要 MacBook 已安装 `ffmpeg`，并使用 TCP 读取 RTSP 音频。
-MacBook 的 `say` 仍然负责语音播报；播报期间会暂时丢弃输入音频，避免把系统播报再次识别为口令。
+语音播报可独立选择 MacBook 或摄像头；播报期间会暂时丢弃输入音频，避免把系统播报再次识别为口令。
 
 先单独检查麦克风识别结果：
 

@@ -647,6 +647,8 @@ class StudyMonitor:
             )
             if evidence:
                 payload["evidence"] = evidence
+        if reminded:
+            payload["audio_output_source"] = self._audio.source
         self._observations.record(
             session_id,
             event_type,

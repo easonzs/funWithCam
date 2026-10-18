@@ -44,7 +44,7 @@ def run_face_enrollment(
     database.initialize()
     repository = FaceProfileRepository(database)
     detector, recognizer, capture = _build_runtime(config)
-    audio = AudioOutput(config.audio.command)
+    audio = AudioOutput.from_config(config.audio)
     timezone = ZoneInfo(config.timezone)
     phase_targets = _phase_targets(config.identity.enrollment_samples)
     embeddings: List[Tuple[float, ...]] = []

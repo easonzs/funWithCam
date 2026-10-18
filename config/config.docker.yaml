@@ -33,10 +33,14 @@ calibration:
   image_dir: data/calibrations
 
 audio:
-  # 在容器内生成离线中文语音，再通过 go2rtc 尝试推送到摄像头扬声器。
-  # 小米摄像头的实际播放能力仍需在家庭局域网内完成端到端验证。
-  command: ["funwithcam-camera-speak", "{text}"]
+  output_source: camera
+  # command 仅在切回 macbook 模式时使用；Docker 默认通过摄像头播报。
+  command: ["espeak-ng", "-v", "cmn", "{text}"]
   camera_test_text: "摄像头人物检测和语音播放测试成功。"
+  camera_api_url: http://go2rtc:1984
+  camera_stream: study_room
+  camera_audio_dir: /app/audio
+  camera_go2rtc_audio_dir: /media
 
 speech:
   enabled: true

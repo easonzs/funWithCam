@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
@@ -453,6 +454,14 @@ class WebAppTest(unittest.TestCase):
                 self.assertIn("去日程维护安排", config_page.text)
                 self.assertIn("配置中心 / 到家与日程提醒", config_page.text)
 
+                device_page = client.get("/config/device")
+                self.assertIn("摄像头与声音", device_page.text)
+                self.assertIn("MacBook 扬声器", device_page.text)
+                self.assertIn(
+                    'action="/config/device/audio-test"',
+                    device_page.text,
+                )
+
                 history = client.get("/history")
                 self.assertIn(
                     'href="/records" aria-current="page"',
@@ -635,6 +644,58 @@ class WebAppTest(unittest.TestCase):
                         "/schedule?tab=courses&message="
                     )
                 )
+
+    def test_device_audio_test_records_output_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            database = Database(database_path)
+            database.initialize()
+            AuthRepository(database).set_password(
+                "parent",
+                "long-password",
+                datetime.now(timezone.utc),
+            )
+            app = create_app(
+                PROJECT_ROOT / "config" / "config.example.yaml",
+                database_path,
+                precheck_runner=_passed_precheck,
+            )
+            audio = MagicMock()
+            audio.source = "macbook_speaker"
+
+            with (
+                patch(
+                    "funwithcam.web.app.AudioOutput.from_config",
+                    return_value=audio,
+                ),
+                TestClient(app) as client,
+            ):
+                client.post(
+                    "/login",
+                    data={
+                        "username": "parent",
+                        "password": "long-password",
+                    },
+                )
+                page = client.get("/config/device")
+                csrf = re.search(
+                    r'name="csrf" value="([^"]+)"',
+                    page.text,
+                ).group(1)
+                response = client.post(
+                    "/config/device/audio-test",
+                    data={"csrf": csrf},
+                    follow_redirects=False,
+                )
+
+            events = ActivityRepository(database).list_for_date(
+                datetime.now(timezone.utc).date().isoformat()
+            )
+
+        self.assertEqual(303, response.status_code)
+        audio.speak.assert_called_once()
+        self.assertEqual("macbook_speaker", events[0]["source"])
+        self.assertEqual("speech_output_test", events[0]["event_type"])
 
     def test_history_page_filters_and_displays_events(self):
         with tempfile.TemporaryDirectory() as directory:

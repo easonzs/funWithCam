@@ -240,7 +240,7 @@ docker compose logs --tail=200 go2rtc
 | 打卡视频 | FFmpeg |
 | 数据库 | SQLite |
 | 配置 | PyYAML |
-| 语音输出 | 当前为 macOS `say` |
+| 语音输出 | `espeak-ng` 生成音频，经 go2rtc 推送到摄像头扬声器 |
 
 当前 `models` 目录约 115 MB，其中包括人脸模型和本地中文语音识别模型。
 
@@ -315,51 +315,45 @@ speech:
 保留 `macbook` 输入模式作为非 Docker 开发模式。Docker Desktop 下直接透传
 Mac 麦克风会显著增加部署复杂度，不应作为一键部署默认路径。
 
-### 6.2 语音输出：当前最大的容器化缺口
+### 6.2 语音输出：摄像头模式已实现
 
-现在使用：
+Docker 默认使用：
 
 ```yaml
 audio:
-  command: ["say", "{text}"]
+  output_source: camera
+  command: ["espeak-ng", "-v", "cmn", "{text}"]
+  camera_api_url: http://go2rtc:1984
+  camera_stream: study_room
+  camera_audio_dir: /app/audio
+  camera_go2rtc_audio_dir: /media
 ```
 
-Linux 容器没有 macOS `say`，所以不能只安装依赖后原样运行。
+FunWithCam 容器使用 `espeak-ng` 在 `/app/audio` 生成临时 WAV；Compose 将
+宿主机 `runtime/audio` 同时挂载给 FunWithCam 的 `/app/audio` 和 go2rtc 的
+`/media`，随后应用调用 go2rtc `/api/ffmpeg?dst=study_room&file=/media/...`
+播放。go2rtc 对该目录使用只读挂载即可，因为音频文件由 FunWithCam 写入。
 
-可选方案：
+当前 Xiaomi 流已确认具有 `audio, sendonly, OPUS/48000/2` 反向音频通道，
+并已在真实设备完成播放验证。家长可在“配置 → 摄像头与声音”查看通道状态并
+点击“播放测试语音”；结果和输出来源会写入执行历史。
 
-| 方案 | 优点 | 缺点 |
-| --- | --- | --- |
-| Mac 宿主机播报代理 | 改造最少，保留当前声音 | 仍有一个非 Docker 小服务 |
-| 容器内离线 TTS + 摄像头扬声器 | 真正一体化，声音来自书桌摄像头 | 需要开发 go2rtc 双向音频播放和兼容性测试 |
-| 容器内 TTS + USB/主机扬声器 | 可使用独立音箱 | Docker Desktop 音频设备透传复杂 |
+非 Docker 的 macOS 安装仍可设置 `audio.output_source: macbook`，继续使用
+本机 `say`。Docker Desktop 不透传 MacBook 扬声器，因此容器默认固定使用
+`camera`。
 
-推荐路线：
+## 7. 当前容器实现与仍需注意的边界
 
-1. **过渡版本**：提供一个自动安装的 Mac 播报代理，由容器通过本机 API 请求
-   `say`，先完成其他依赖的容器化；
-2. **目标版本**：容器内生成本地 TTS 音频，经 go2rtc 推送到小米摄像头扬声器；
-3. 保留 Mac 播报代理作为兼容回退。
+### 7.1 缺少正式人脸时 Web 仍可启动
 
-当前 go2rtc 流已经显示小米摄像头具有 `sendonly OPUS/48000/2` 音频通道；
-go2rtc 官方也支持 Xiaomi 双向音频和向摄像头播放音频。因此目标方案技术上
-合理，但必须先做一次独立原型验证，不能在没有真实播报测试的情况下承诺可用。
+`funwithcam serve` 会先启动 Web。数据库尚未录入正式孩子或家长身份时，后台
+提醒线程进入等待并定期重试，不会再导致整个容器退出。`/health/ready` 会通过
+`setup_required` 和 `missing_identities` 明确报告缺少的资料。
 
-## 7. 为什么现在还不能只加一个 Dockerfile
-
-### 7.1 首次启动会被正式人脸校验阻断
-
-当前 `funwithcam serve` 启动时要求数据库已经有：
-
-- 至少一个正式孩子身份；
-- 至少一个正式家长身份。
-
-新安装数据库为空，容器会直接退出。需要改为：
+完整启用提醒仍需按顺序完成：
 
 ```text
-未初始化
-  ↓
-只启动 Web 设置服务
+启动 Web
   ↓
 创建家长账号
   ↓
@@ -372,17 +366,9 @@ go2rtc 官方也支持 Xiaomi 双向音频和向摄像头播放音频。因此�
 系统进入正式运行
 ```
 
-也就是说，缺少人脸资料时不应视为进程级错误，而应显示“等待首次设置”。
+### 7.2 容器使用独立配置模板
 
-### 7.2 配置仍然是本机路径模型
-
-当前配置文件包含：
-
-- `127.0.0.1` go2rtc 地址；
-- macOS `say`；
-- 相对于项目目录的模型与数据路径。
-
-需要增加容器配置模板或环境变量覆盖机制，生成类似：
+`config/config.docker.yaml` 已使用 Compose 服务名和容器内路径：
 
 ```yaml
 video:
@@ -400,23 +386,23 @@ identity:
   debug_dir: /app/data/face_debug
 ```
 
-### 7.3 健康检查不够
+部署脚本首次执行时将该模板复制到
+`runtime/config/funwithcam.yaml`，后续执行会保留家庭现有配置。
 
-当前 Web `/health` 正常时，摄像头仍可能没有包。需要将 Web、应用就绪和媒体
-健康分开，否则 Docker 会把“页面可打开但监测完全没有画面”误认为健康。
+### 7.3 健康检查边界
 
-### 7.4 模型交付方式未最终确定
+当前已提供 `/health/live` 和 `/health/ready`。Compose 用 `live` 判断进程
+是否存活；部署脚本另外执行 `media-check --require-audio`，确认
+`study_room` 的视频和音频可以读取。
 
-两种选择：
+仍未提供持续查询媒体包增长的 `/health/media`，因此运行一段时间后的摄像头
+断流主要依赖执行历史、日志和 `scripts/diagnose.sh` 排查。
 
-- 模型直接放进镜像：真正开箱即用，但镜像更大，发布前要确认模型再分发许可；
-- 首次部署自动下载并校验 SHA-256：镜像较小，但首次运行依赖网络。
+### 7.4 模型交付方式
 
-推荐：
-
-- 已确认可再分发的人脸模型放入镜像；
-- sherpa-onnx 模型在部署脚本中下载并校验；
-- 后续发布“离线完整包”，供没有稳定网络的家庭使用。
+人脸模型由仓库复制进镜像；sherpa-onnx 模型在构建镜像时下载并执行 SHA-256
+校验。普通新 Mac 只拉取已构建镜像，不在 `deploy.sh` 阶段重复下载模型文件。
+开发者使用 `./deploy.sh --build` 时才会在本机构建过程中访问模型下载地址。
 
 ## 8. 目标 Compose 结构（设计示例）
 
@@ -582,41 +568,41 @@ diagnose.sh
 
 ### 阶段 A：容器化前置改造
 
-- [ ] 增加未初始化/首次设置状态；
-- [ ] 正式人脸缺失时允许 Web 启动；
-- [ ] 将音频输出抽象为 provider，而不是固定 shell 命令；
-- [ ] 增加容器内路径和环境变量覆盖；
-- [ ] 增加 `/health/live`、`/health/ready`、`/health/media`；
-- [ ] 数据和模型目录全部可配置；
+- [x] 增加未初始化状态报告；
+- [x] 正式人脸缺失时允许 Web 启动；
+- [x] 将音频输出抽象为统一出口，而不是固定 shell 命令；
+- [x] 增加容器配置模板和容器内路径；
+- [ ] 增加 `/health/media`（`/health/live`、`/health/ready` 已完成）；
+- [x] 数据和模型目录支持容器路径；
 - [ ] 增加数据库安全关闭与备份命令。
 
 ### 阶段 B：基础 Docker 原型
 
-- [ ] 编写多架构 Dockerfile；
-- [ ] 安装 FFmpeg 和必要 Linux 系统库；
-- [ ] 编写 `.dockerignore`，排除数据库、密钥、调试照片和本地虚拟环境；
-- [ ] 编写 `compose.yaml`；
-- [ ] 容器内部使用 `go2rtc` 服务名；
+- [x] 编写兼容 `arm64` / `amd64` 基础镜像的 Dockerfile；
+- [x] 安装 FFmpeg、espeak-ng 和必要 Linux 系统库；
+- [x] 编写 `.dockerignore`，排除数据库、密钥、调试照片和本地虚拟环境；
+- [x] 编写 `compose.yaml`；
+- [x] 容器内部使用 `go2rtc` 服务名；
 - [ ] 验证 Apple Silicon 原生 `linux/arm64`；
 - [ ] 验证 Web、视频、人脸、姿势、光线、摄像头语音识别和打卡录像。
 
 ### 阶段 C：一键部署和首次设置
 
-- [ ] 编写幂等 `deploy.sh`；
+- [x] 编写可重复执行并保留现有配置和数据的 `deploy.sh`；
 - [ ] 实现 Web `/setup`；
-- [ ] 自动生成并验证配置；
-- [ ] 模型自动下载、哈希校验和失败重试；
+- [x] 自动生成运行配置并验证 Compose；
+- [x] 镜像构建时下载语音模型、校验哈希并失败重试；
 - [ ] 端口冲突和目录权限检查；
-- [ ] 提供 `diagnose.sh`。
+- [x] 提供 `diagnose.sh`。
 
 ### 阶段 D：语音输出容器化
 
-- [ ] 验证 Xiaomi + go2rtc 双向音频；
-- [ ] 选择中文离线 TTS 模型并确认再分发许可；
-- [ ] 容器中生成音频；
-- [ ] 推送音频到摄像头扬声器；
-- [ ] 保留 Mac 播报代理作为回退；
-- [ ] 验证播报期间不会被语音识别再次收录。
+- [x] 验证 Xiaomi + go2rtc 双向音频；
+- [x] 使用 Debian `espeak-ng` 生成中文离线音频；
+- [x] 容器中生成音频；
+- [x] 推送音频到摄像头扬声器；
+- [x] 非 Docker macOS 保留 `say` 输出；
+- [x] 播报期间暂停语音输入提交，避免再次识别系统播报。
 
 ### 阶段 E：发布与升级
 
@@ -677,17 +663,14 @@ diagnose.sh
 
 ## 14. 推荐的下一步
 
-不建议下一步立刻写 Dockerfile。合理顺序是：
+Dockerfile、Compose、部署脚本、未初始化 Web、健康检查和摄像头语音输出均已
+进入当前实现。下一步重点是完成新 Mac 的全流程验收与发布自动化：
 
-1. 实现“未初始化也能启动 Web”；
-2. 抽象并确定语音输出方案；
-3. 让所有路径支持容器目录；
-4. 增加真正的就绪和媒体健康检查；
-5. 再编写 Dockerfile、Compose 和部署脚本；
-6. 最后做 Web 首次设置向导。
-
-这样可以避免得到一个“容器显示 Running，但新用户无法设置人脸、没有语音输出，
-摄像头断流也显示健康”的伪一键部署。
+1. 在干净 Mac 上从 GHCR 冷启动；
+2. 验证摄像头配置、家长账号、人脸和基准录入；
+3. 验证视频、摄像头收音、摄像头播音和打卡录像；
+4. 验证 `update.sh` 升级和升级前备份；
+5. 为正式镜像增加版本标签和回滚演练。
 
 ## 15. 官方参考资料
 

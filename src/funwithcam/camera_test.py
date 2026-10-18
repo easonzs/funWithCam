@@ -33,7 +33,7 @@ def run_camera_test(config_path: Path) -> None:
         config.person,
         config.presence,
     )
-    audio = AudioOutput(config.audio.command)
+    audio = AudioOutput.from_config(config.audio)
     interval = 1.0 / config.video.inference_fps
     last_inference_at = 0.0
 

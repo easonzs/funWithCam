@@ -171,7 +171,9 @@ def main() -> None:
             level=getattr(logging, config.log_level, logging.INFO),
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         )
-        AudioOutput(config.audio.command).speak(config.audio.camera_test_text)
+        AudioOutput.from_config(config.audio).speak(
+            config.audio.camera_test_text
+        )
     elif args.command == "camera-test":
         run_camera_test(args.config)
     elif args.command == "speech-test":

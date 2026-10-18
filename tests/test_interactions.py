@@ -184,6 +184,7 @@ class SpeechInteractionTest(unittest.TestCase):
         prechecks = RecordingPrechecks()
         audio_patch = patch("funwithcam.speech.AudioOutput")
         audio_output = audio_patch.start()
+        audio_output.from_config.return_value.source = "macbook_speaker"
         self.addCleanup(audio_patch.stop)
         handler = SpeechCommandHandler(config, database_path, prechecks)
         return config, database_path, prechecks, audio_output, handler
@@ -232,12 +233,12 @@ class SpeechInteractionTest(unittest.TestCase):
                 "你是要开始视频打卡吗？请说“确认打卡”，或者说“取消”。",
                 dialogue["prompt"],
             )
-            audio_output.return_value.speak.reset_mock()
+            audio_output.from_config.return_value.speak.reset_mock()
 
             self.assertTrue(handler.handle("请回答"))
 
             refreshed = dialogues.get(dialogue["id"])
-            audio_output.return_value.speak.assert_not_called()
+            audio_output.from_config.return_value.speak.assert_not_called()
             self.assertEqual(1, refreshed["ask_count"])
             self.assertEqual(first_retry_at, refreshed["next_prompt_at"])
 
