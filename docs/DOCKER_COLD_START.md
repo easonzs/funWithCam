@@ -34,12 +34,13 @@ ghcr.io/easonzs/funwithcam:latest
 go2rtc 使用 FunWithCam 发布的 Xiaomi 音频修正版：
 
 ```text
-ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.1
+ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.2
 ```
 
 官方 1.9.14 的 Xiaomi CS2 发送代码会把媒体头误写进音频 payload，表现为
-接口成功但摄像头播放静态噪音。修正版只修复该复制错误，并在镜像构建时运行
-对应 Go 回归测试。仓库中的 `.github/workflows/publish-image.yml` 会在
+接口成功但摄像头播放静态噪音。修正版同时为
+`chuangmi.camera.061a01` 使用 40ms Opus 封包，并在镜像构建时运行对应
+Go 回归测试。仓库中的 `.github/workflows/publish-image.yml` 会在
 `main` 分支相关代码更新或推送 `v*` 标签时构建 FunWithCam 和修正版 go2rtc
 的 `linux/arm64`、`linux/amd64` 镜像。
 

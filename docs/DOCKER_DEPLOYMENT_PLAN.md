@@ -331,8 +331,9 @@ audio:
 
 FunWithCam 容器使用 `espeak-ng` 在 `/app/audio` 生成临时 WAV；Compose 将
 宿主机 `runtime/audio` 同时挂载给 FunWithCam 的 `/app/audio` 和 go2rtc 的
-`/media`，随后应用调用 go2rtc `/api/ffmpeg?dst=study_room&file=/media/...`
-播放。go2rtc 对该目录使用只读挂载即可，因为音频文件由 FunWithCam 写入。
+`/media`。应用先将音频转换为 48kHz 双声道 WAV，再调用 go2rtc
+`/api/streams` 显式编码为 Opus 并播放。go2rtc 对该目录使用只读挂载即可，
+因为音频文件由 FunWithCam 写入。
 
 当前 Xiaomi 流已确认具有 `audio, sendonly, OPUS/48000/2` 反向音频通道，
 并已在真实设备完成播放验证。家长可在“配置 → 摄像头与声音”查看通道状态并
@@ -340,8 +341,9 @@ FunWithCam 容器使用 `espeak-ng` 在 `/app/audio` 生成临时 WAV；Compose 
 
 官方 go2rtc 1.9.14 的 Xiaomi CS2 `WritePacket` 实现会把媒体头再次复制到
 payload，导致接口返回成功但摄像头只播放静态噪音。Compose 默认使用
-`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.1`：它基于固定上游提交，
-应用一行 payload 修复，并在镜像构建时运行对应 Go 回归测试。
+`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.2`：它基于固定上游提交，
+应用 payload 修复，并为 `chuangmi.camera.061a01` 使用 40ms Opus 封包；
+镜像构建时会运行对应 Go 回归测试。
 
 非 Docker 的 macOS 安装仍可设置 `audio.output_source: macbook`，继续使用
 本机 `say`。Docker Desktop 不透传 MacBook 扬声器，因此容器默认固定使用

@@ -55,3 +55,41 @@ index 0000000..65b5a08
 +		t.Fatalf("audio payload mismatch: got %x, want %x", got, payload)
 +	}
 +}
+diff --git a/pkg/xiaomi/miss/client.go b/pkg/xiaomi/miss/client.go
+index 3113632..8a7a44f 100644
+--- a/pkg/xiaomi/miss/client.go
++++ b/pkg/xiaomi/miss/client.go
+@@ -139,6 +139,7 @@ const (
+ 	ModelLoockV2 = "loock.cateye.v02"
+ 	ModelC200    = "chuangmi.camera.046c04"
+ 	ModelC300    = "chuangmi.camera.72ac1"
++	ModelC500Pro = "chuangmi.camera.061a01"
+ 	// ModelXiaofang looks like it has the same firmware as the ModelDafang.
+ 	// There is also an older model "isa.camera.isc5" that only works with the legacy protocol.
+ 	ModelXiaofang = "isa.camera.isc5c1"
+@@ -213,7 +214,7 @@ func (c *Client) SpeakerCodec() uint32 {
+ 	switch c.model {
+ 	case ModelDafang, ModelXiaofang, "isa.camera.hlc6":
+ 		return codecPCM
+-	case "chuangmi.camera.72ac1":
++	case ModelC300, ModelC500Pro:
+ 		return codecOPUS
+ 	}
+ 	return 0
+diff --git a/pkg/xiaomi/miss/client_test.go b/pkg/xiaomi/miss/client_test.go
+new file mode 100644
+index 0000000..b4dcfb8
+--- /dev/null
++++ b/pkg/xiaomi/miss/client_test.go
+@@ -0,0 +1,11 @@
++package miss
++
++import "testing"
++
++func TestSpeakerCodecC500Pro(t *testing.T) {
++	client := Client{model: ModelC500Pro}
++
++	if got := client.SpeakerCodec(); got != codecOPUS {
++		t.Fatalf("speaker codec = %d, want %d", got, codecOPUS)
++	}
++}

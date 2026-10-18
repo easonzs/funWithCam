@@ -14,13 +14,13 @@ COPY deploy/go2rtc-xiaomi-audio.patch /tmp/go2rtc-xiaomi-audio.patch
 
 RUN git apply --check /tmp/go2rtc-xiaomi-audio.patch \
     && git apply /tmp/go2rtc-xiaomi-audio.patch \
-    && go test ./pkg/xiaomi/miss/cs2 \
+    && go test ./pkg/xiaomi/miss/... \
     && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go2rtc .
 
 FROM alexxit/go2rtc:1.9.14
 
 COPY --from=build /go2rtc /usr/local/bin/go2rtc
 
-LABEL org.opencontainers.image.description="go2rtc 1.9.14 Xiaomi CS2 speaker payload fix"
+LABEL org.opencontainers.image.description="go2rtc 1.9.14 Xiaomi CS2 speaker payload and C500 Pro Opus packetization fix"
 LABEL org.opencontainers.image.source="https://github.com/easonzs/funWithCam"
 

@@ -68,19 +68,41 @@ def speak_to_camera(
     local_dir.mkdir(parents=True, exist_ok=True)
     _remove_old_audio(local_dir)
 
-    tts_command, suffix = _tts_command()
-    filename = "speech-{}{}".format(uuid.uuid4().hex, suffix)
-    local_path = local_dir / filename
-    subprocess.run(tts_command(local_path, text), check=True)
+    tts_command, source_suffix = _tts_command()
+    stem = "speech-{}".format(uuid.uuid4().hex)
+    source_path = local_dir / "{}{}".format(stem, source_suffix)
+    playback_path = local_dir / "{}-48k-stereo.wav".format(stem)
+    subprocess.run(tts_command(source_path, text), check=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source_path),
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-c:a",
+            "pcm_s16le",
+            "-y",
+            str(playback_path),
+        ],
+        check=True,
+    )
 
     query = urlencode(
         {
             "dst": stream_name,
-            "file": str(go2rtc_dir / filename),
+            "src": "ffmpeg:{}#audio=opus#input=file".format(
+                go2rtc_dir / playback_path.name
+            ),
         }
     )
     request = Request(
-        "{}/api/ffmpeg?{}".format(api, query),
+        "{}/api/streams?{}".format(api, query),
         method="POST",
     )
     for attempt in range(1, CAMERA_CONSUMER_RETRY_ATTEMPTS + 1):

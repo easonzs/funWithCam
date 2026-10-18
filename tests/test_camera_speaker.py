@@ -25,7 +25,7 @@ class CameraSpeakerTest(unittest.TestCase):
             response.status = 200
             response.__enter__.return_value = response
             missing_consumer = HTTPError(
-                "http://go2rtc:1984/api/ffmpeg",
+                "http://go2rtc:1984/api/streams",
                 500,
                 "Internal Server Error",
                 {},
@@ -107,17 +107,34 @@ class CameraSpeakerTest(unittest.TestCase):
             ):
                 speak_to_camera("开始学习")
 
-        command = run.call_args.args[0]
-        generated_path = Path(command[command.index("-w") + 1])
+        self.assertEqual(2, run.call_count)
+        tts_command = run.call_args_list[0].args[0]
+        generated_path = Path(tts_command[tts_command.index("-w") + 1])
         self.assertEqual(Path(directory).resolve(), generated_path.parent)
-        self.assertEqual("开始学习", command[-1])
+        self.assertEqual("开始学习", tts_command[-1])
+        convert_command = run.call_args_list[1].args[0]
+        playback_path = Path(convert_command[-1])
+        self.assertEqual(Path(directory).resolve(), playback_path.parent)
+        self.assertEqual(
+            "48000",
+            convert_command[convert_command.index("-ar") + 1],
+        )
+        self.assertEqual("2", convert_command[convert_command.index("-ac") + 1])
+        self.assertEqual(
+            "pcm_s16le",
+            convert_command[convert_command.index("-c:a") + 1],
+        )
         request = open_url.call_args.args[0]
         query = parse_qs(urlsplit(request.full_url).query)
-        self.assertEqual("/api/ffmpeg", urlsplit(request.full_url).path)
+        self.assertEqual("/api/streams", urlsplit(request.full_url).path)
         self.assertEqual(["study_room"], query["dst"])
         self.assertEqual(
-            ["/media/{}".format(generated_path.name)],
-            query["file"],
+            [
+                "ffmpeg:/media/{}#audio=opus#input=file".format(
+                    playback_path.name
+                )
+            ],
+            query["src"],
         )
         self.assertEqual("POST", request.method)
 

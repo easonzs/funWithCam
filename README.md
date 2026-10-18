@@ -95,9 +95,11 @@ audio:
 
 Xiaomi CS2 摄像头播放必须使用仓库提供的修正版 go2rtc。官方 1.9.14 的
 `WritePacket` 会误把媒体头复制到音频 payload，接口虽然返回成功，摄像头实际
-只会播放静态噪音。Docker 默认镜像
-`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.1` 已包含该一行修复及对应
-回归测试。
+只会播放静态噪音。`chuangmi.camera.061a01` 还需要使用 40ms Opus 封包。
+Docker 默认镜像
+`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.2` 已包含两项修复及对应
+回归测试。FunWithCam 会先将播报音频统一转换为摄像头声明的 48kHz 双声道，
+再显式编码为 Opus。
 
 ## 家长 Web
 
