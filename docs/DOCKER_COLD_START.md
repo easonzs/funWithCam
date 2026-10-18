@@ -23,19 +23,19 @@ docker save \
 它只能把本机已经存在的镜像打成离线文件，不能从源码生成镜像，也不会启动
 服务。正常联网部署使用 GHCR，不需要运行这条命令。
 
-## 2. 正式镜像放在哪里
+## 2. 正式部署需要哪些镜像
 
-FunWithCam 计划发布到 GitHub Container Registry：
+新 Mac 实际运行两个业务镜像，二者都发布到 GitHub Container Registry
+（GHCR）：
 
-```text
-ghcr.io/easonzs/funwithcam:latest
-```
+| 镜像 | 地址 | 包含内容 |
+|---|---|---|
+| FunWithCam | `ghcr.io/easonzs/funwithcam:latest` | Python 3.11、应用代码、SQLite 库、OpenCV、MediaPipe、FFmpeg、espeak-ng、人脸与语音模型 |
+| go2rtc | `ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3` | go2rtc 运行程序、小米 CS2 payload 修复、`chuangmi.camera.061a01` 的 40ms Opus 适配 |
 
-go2rtc 使用 FunWithCam 发布的 Xiaomi 音频修正版：
-
-```text
-ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.2
-```
+镜像从 GHCR 拉取后保存在 Docker Desktop 管理的本地镜像存储中，可通过
+`docker image ls` 查看；它们不是普通文件，不位于项目的 `runtime/` 目录。
+`runtime/` 只保存配置和家庭数据。需要制作离线文件时才使用 `docker save`。
 
 官方 1.9.14 的 Xiaomi CS2 发送代码会把媒体头误写进音频 payload，表现为
 接口成功但摄像头播放静态噪音。修正版同时为
@@ -43,6 +43,12 @@ ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.2
 Go 回归测试。仓库中的 `.github/workflows/publish-image.yml` 会在
 `main` 分支相关代码更新或推送 `v*` 标签时构建 FunWithCam 和修正版 go2rtc
 的 `linux/arm64`、`linux/amd64` 镜像。
+
+`python:3.11-slim-bookworm`、`golang:1.24.9-alpine` 和
+`alexxit/go2rtc:1.9.14` 是 GitHub Actions 构建镜像时使用的基础镜像，不是
+新 Mac 需要额外启动的第三、第四个服务。Go 模块由固定的 Go 1.24.9 构建阶段
+通过 `GOPROXY=https://proxy.golang.org,direct` 下载并编译；最终 go2rtc
+运行镜像只复制编译后的二进制，不包含 Go 工具链。普通新 Mac 不安装 Go。
 
 首次发布后的可见性有两种选择：
 
@@ -58,6 +64,16 @@ Go 回归测试。仓库中的 `.github/workflows/publish-image.yml` 会在
 在 GitHub Actions 首次成功、Package 可见性配置完成之前，这个地址只是预定
 地址，不能认为镜像已经可下载。
 
+截至 2026 年 10 月 18 日，本机对上述 GHCR 地址执行匿名 manifest 检查均返回
+`unauthorized`。这只能说明镜像目前不能匿名拉取，可能是 Package 仍为
+Private，也可能是对应标签尚未成功发布；不能据此认定公开冷启动已经可用。
+发布验收必须同时满足：
+
+1. GitHub Actions 的两个镜像构建任务均成功；
+2. GHCR 中能看到上述标签及 `linux/arm64`、`linux/amd64` 两个平台；
+3. 若 Package 保持 Private，新 Mac 已执行 `docker login ghcr.io`；
+4. 在新 Mac 上执行 `docker pull` 能分别拉取两个镜像。
+
 ## 3. 新 Mac 冷启动
 
 前提：
@@ -65,6 +81,15 @@ Go 回归测试。仓库中的 `.github/workflows/publish-image.yml` 会在
 - 安装并启动 Docker Desktop；
 - 新 Mac 与小米摄像头处于同一家庭局域网；
 - 可以访问 GitHub 和 GHCR。
+
+如果 GHCR Package 保持 Private，先创建具备 `read:packages` 权限的 GitHub
+Personal Access Token，然后执行：
+
+```bash
+printf '%s' '<TOKEN>' | docker login ghcr.io -u '<GITHUB_USERNAME>' --password-stdin
+```
+
+不要把 Token 写入仓库、`.env` 或部署文档。
 
 执行：
 
@@ -79,7 +104,7 @@ cd funWithCam
 1. 检查 Docker Desktop；
 2. 从 `.env.example` 生成 `.env`，已存在时绝不覆盖；
 3. 创建 `runtime/config`、`runtime/data` 和 `runtime/audio`；
-4. 从 GHCR 拉取 FunWithCam 镜像，从 Docker Hub 拉取 go2rtc；
+4. 从 GHCR 分别拉取 FunWithCam 和定制 go2rtc 两个镜像；
 5. 启动 go2rtc，并打开其本地管理页面；
 6. 引导通过 `Add -> Xiaomi` 完成小米登录、验证码和摄像头选择；
 7. 要求视频流固定命名为 `study_room`；
@@ -168,11 +193,13 @@ cat runtime/config/go2rtc.yaml
 ./update.sh
 ```
 
-`update.sh` 会拉取 Git 中最新部署文件、拉取新镜像并替换容器，同时保留
-`runtime/` 中所有家庭数据。
+`update.sh` 会拉取 Git 中最新部署文件、分别拉取两个镜像并替换容器，同时
+保留 `runtime/` 中所有家庭数据。更新后会继续检查 go2rtc API、FunWithCam
+健康状态和 `study_room` 视频/音频轨道；容器已启动但媒体检查失败时不会报告
+“更新成功”。
 
-如果现有 `.env` 仍精确使用 `alexxit/go2rtc:1.9.14`，脚本会自动切换到
-Xiaomi 扬声器噪音修正版；其他用户自定义的 go2rtc 镜像不会被覆盖。
+如果现有 `.env` 使用 `alexxit/go2rtc:1.9.14`、`fix.1` 或 `fix.2`，脚本会
+自动切换到 `fix.3`；其他用户自定义的 go2rtc 镜像不会被覆盖。
 
 开发调试时可显式从当前源码构建：
 
@@ -180,7 +207,16 @@ Xiaomi 扬声器噪音修正版；其他用户自定义的 go2rtc 镜像不会�
 ./deploy.sh --build
 ```
 
-该选项不是面向普通用户的新 Mac 安装路径。
+该选项不是面向普通用户的新 Mac 安装路径。它会额外拉取
+`python:3.11-slim-bookworm`、`golang:1.24.9-alpine` 和
+`alexxit/go2rtc:1.9.14` 等构建基础镜像，并在本机下载 Python/Go 依赖。
+
+如果浏览器或终端可以访问 Docker Hub，但 Docker 构建停在
+`load metadata for docker.io/library/golang` 并最终
+`context deadline exceeded`，说明 Docker Desktop 虚拟机没有使用宿主机代理，
+不是 Golang 标签不存在。应在 Docker Desktop 中配置 HTTP/HTTPS 代理并重启，
+或让本机代理允许来自 Docker 虚拟机的连接。普通正式部署不要用 `--build`
+绕过 GHCR 发布问题。
 
 ## 7. 当前尚未包含的能力
 

@@ -53,7 +53,7 @@ Docker 不会自动解决：
 
 ### 3.2 Dockerfile
 
-`Dockerfile` 描述如何制作 FunWithCam 镜像，预计包含：
+`Dockerfile` 描述如何制作 FunWithCam 镜像，当前包含：
 
 - Python 3.11 Linux 基础环境；
 - FFmpeg 和 OpenCV 所需系统库；
@@ -254,8 +254,13 @@ go2rtc 负责：
 - 向打卡功能提供可录制的音视频流；
 - 暴露媒体包数，帮助判断摄像头是否真的持续输出。
 
-官方 go2rtc 镜像支持 `amd64` 和 `arm64` 等多种架构，因此可以运行在当前
-Apple Silicon MacBook 上。
+正式部署不直接使用官方 go2rtc 1.9.14，而使用
+`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3`。GitHub Actions 以
+`golang:1.24.9-alpine` 为构建阶段，通过 Go Modules 下载依赖、应用仓库中的
+Xiaomi 音频补丁并执行 Go 测试；最终运行阶段基于
+`alexxit/go2rtc:1.9.14`，只复制编译后的 go2rtc 二进制。因此新 Mac 只拉取
+最终镜像，不需要安装 Go，也不会在启动时下载 Go 依赖。两个最终镜像均构建
+`linux/amd64` 和 `linux/arm64`。
 
 ### 4.3 必须持久化的数据
 
@@ -341,7 +346,7 @@ FunWithCam 容器使用 `espeak-ng` 在 `/app/audio` 生成临时 WAV；Compose 
 
 官方 go2rtc 1.9.14 的 Xiaomi CS2 `WritePacket` 实现会把媒体头再次复制到
 payload，导致接口返回成功但摄像头只播放静态噪音。Compose 默认使用
-`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.2`：它基于固定上游提交，
+`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3`：它基于固定上游提交，
 应用 payload 修复，并为 `chuangmi.camera.061a01` 使用 40ms Opus 封包；
 镜像构建时会运行对应 Go 回归测试。
 
@@ -410,6 +415,10 @@ identity:
 人脸模型由仓库复制进镜像；sherpa-onnx 模型在构建镜像时下载并执行 SHA-256
 校验。普通新 Mac 只拉取已构建镜像，不在 `deploy.sh` 阶段重复下载模型文件。
 开发者使用 `./deploy.sh --build` 时才会在本机构建过程中访问模型下载地址。
+本机构建还会从 Docker Hub 拉取固定的 Go 和 go2rtc 基础镜像；Docker Desktop
+使用独立虚拟机网络，宿主机浏览器或 `curl` 能访问 Docker Hub，并不代表
+Docker daemon 已经配置相同代理。正式新 Mac 部署只拉取 GHCR 成品镜像，不
+经过 Go/Python 构建阶段。
 
 ## 8. 目标 Compose 结构（设计示例）
 
@@ -422,13 +431,14 @@ name: funwithcam
 
 services:
   go2rtc:
-    image: alexxit/go2rtc:<固定版本>
+    image: ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3
     restart: unless-stopped
     ports:
       - "127.0.0.1:1984:1984"
       - "127.0.0.1:8554:8554"
     volumes:
-      - ./runtime/config/go2rtc.yaml:/config/go2rtc.yaml:ro
+      - ./runtime/config/go2rtc.yaml:/config/go2rtc.yaml
+      - ./runtime/audio:/media:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:1984/api/streams"]
       interval: 10s
@@ -446,6 +456,7 @@ services:
     volumes:
       - ./runtime/data:/app/data
       - ./runtime/config/funwithcam.yaml:/app/config/config.yaml:ro
+      - ./runtime/audio:/app/audio
     environment:
       TZ: Asia/Shanghai
     healthcheck:

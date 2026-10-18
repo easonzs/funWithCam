@@ -37,6 +37,20 @@ wait_for_url() {
     return 1
 }
 
+pull_image() {
+    label=$1
+    image=$2
+    echo "拉取 ${label}：${image}"
+    if docker pull "$image"; then
+        return
+    fi
+    echo >&2
+    echo "${label}拉取失败：${image}" >&2
+    echo "如果看到 unauthorized，请确认 GHCR Package 已公开；" >&2
+    echo "私有 Package 请先执行 docker login ghcr.io。" >&2
+    fail "正式部署所需镜像尚不可下载。"
+}
+
 stream_is_defined() {
     curl --fail --silent --show-error \
         "http://127.0.0.1:${GO2RTC_API_PORT}/api/streams" \
@@ -77,6 +91,11 @@ WEB_PORT=$(env_value WEB_PORT)
 WEB_PORT=${WEB_PORT:-8000}
 GO2RTC_API_PORT=$(env_value GO2RTC_API_PORT)
 GO2RTC_API_PORT=${GO2RTC_API_PORT:-1984}
+FUNWITHCAM_IMAGE=$(env_value FUNWITHCAM_IMAGE)
+FUNWITHCAM_IMAGE=${FUNWITHCAM_IMAGE:-ghcr.io/easonzs/funwithcam:latest}
+GO2RTC_IMAGE=$(env_value GO2RTC_IMAGE)
+GO2RTC_IMAGE=${GO2RTC_IMAGE:-ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3}
+export FUNWITHCAM_IMAGE GO2RTC_IMAGE
 
 "$PROJECT_DIR/scripts/prepare-runtime.sh"
 docker compose config --quiet
@@ -87,16 +106,9 @@ if [ "$BUILD_LOCAL" -eq 1 ]; then
     echo "开发模式：从源码构建 FunWithCam 和 Xiaomi 音频修正版 go2rtc。"
     docker compose build go2rtc funwithcam
 else
-    echo "正式模式：从镜像仓库拉取 FunWithCam 和 go2rtc。"
-    if ! docker compose pull; then
-        echo >&2
-        echo "无法拉取 FunWithCam 镜像。" >&2
-        echo "默认地址记录在 .env 的 FUNWITHCAM_IMAGE 中。" >&2
-        echo "请确认 GitHub Actions 已发布镜像，且 GHCR 包已设为公开。" >&2
-        echo "如果包保持私有，请先执行 docker login ghcr.io。" >&2
-        echo "开发者也可显式运行 ./deploy.sh --build 在本机构建。" >&2
-        exit 1
-    fi
+    echo "正式模式需要拉取 2 个镜像，不在新 Mac 安装 Python 或 Go。"
+    pull_image "go2rtc 镜像" "$GO2RTC_IMAGE"
+    pull_image "FunWithCam 镜像" "$FUNWITHCAM_IMAGE"
 fi
 
 docker compose up -d go2rtc
@@ -198,6 +210,8 @@ echo "  Web:    http://127.0.0.1:${WEB_PORT}"
 echo "  账号:   ${ADMIN_USERNAME}"
 echo "  健康:   http://127.0.0.1:${WEB_PORT}/health/ready"
 echo "  go2rtc: http://127.0.0.1:${GO2RTC_API_PORT}"
+echo "  应用镜像: ${FUNWITHCAM_IMAGE}"
+echo "  媒体镜像: ${GO2RTC_IMAGE}"
 echo
 echo "配置保存在 .env 和 runtime/config/；家庭记录保存在 runtime/data/。"
 echo "查看日志：docker compose logs -f"

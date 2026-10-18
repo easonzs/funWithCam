@@ -97,7 +97,7 @@ Xiaomi CS2 摄像头播放必须使用仓库提供的修正版 go2rtc。官方 1
 `WritePacket` 会误把媒体头复制到音频 payload，接口虽然返回成功，摄像头实际
 只会播放静态噪音。`chuangmi.camera.061a01` 还需要使用 40ms Opus 封包。
 Docker 默认镜像
-`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.2` 已包含两项修复及对应
+`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3` 已包含两项修复及对应
 回归测试。FunWithCam 会先将播报音频统一转换为摄像头声明的 48kHz 双声道，
 再显式编码为 Opus。
 
@@ -318,8 +318,9 @@ funwithcam serve \
 
 ## Docker 部署到另一台 Mac
 
-冷启动只需要 Docker Desktop 和 Git。新 Mac 不安装 Python、OpenCV、
-MediaPipe、FFmpeg 或语音模型，也不执行 `docker save`：
+冷启动只需要 Docker Desktop 和 Git，共运行两个业务镜像：FunWithCam 与
+定制 go2rtc。新 Mac 不安装 Python、Go、OpenCV、MediaPipe、FFmpeg 或语音
+模型，也不执行 `docker save`：
 
 ```bash
 git clone git@github.com:easonzs/funWithCam.git
@@ -327,9 +328,10 @@ cd funWithCam
 ./deploy.sh
 ```
 
-脚本默认从 `ghcr.io/easonzs/funwithcam:latest` 拉取正式镜像，生成 `.env`，
-保留宿主机 `runtime/` 家庭数据，引导通过 go2rtc WebUI 配置小米摄像头，
-创建 `parent` 家长账号，并实际检查 `study_room` 的视频和音频轨道。
+脚本默认从 GHCR 分别拉取 `ghcr.io/easonzs/funwithcam:latest` 和
+`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3`，生成 `.env`，保留
+宿主机 `runtime/` 家庭数据，引导通过 go2rtc WebUI 配置小米摄像头，创建
+`parent` 家长账号，并实际检查 `study_room` 的视频和音频轨道。
 
 开发者需要从当前源码构建时才使用：
 
