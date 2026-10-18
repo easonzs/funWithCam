@@ -16,7 +16,7 @@
 ```bash
 docker save \
   funwithcam:local \
-  alexxit/go2rtc:1.9.14 \
+  go2rtc-xiaomi-audio:local \
   | gzip > backups/funwithcam-images-arm64.tar.gz
 ```
 
@@ -31,14 +31,17 @@ FunWithCam 计划发布到 GitHub Container Registry：
 ghcr.io/easonzs/funwithcam:latest
 ```
 
-go2rtc 使用官方镜像：
+go2rtc 使用 FunWithCam 发布的 Xiaomi 音频修正版：
 
 ```text
-alexxit/go2rtc:1.9.14
+ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.1
 ```
 
-仓库中的 `.github/workflows/publish-image.yml` 会在 `main` 分支相关代码更新或
-推送 `v*` 标签时构建 `linux/arm64` 和 `linux/amd64` 两种架构。
+官方 1.9.14 的 Xiaomi CS2 发送代码会把媒体头误写进音频 payload，表现为
+接口成功但摄像头播放静态噪音。修正版只修复该复制错误，并在镜像构建时运行
+对应 Go 回归测试。仓库中的 `.github/workflows/publish-image.yml` 会在
+`main` 分支相关代码更新或推送 `v*` 标签时构建 FunWithCam 和修正版 go2rtc
+的 `linux/arm64`、`linux/amd64` 镜像。
 
 首次发布后的可见性有两种选择：
 
@@ -166,6 +169,9 @@ cat runtime/config/go2rtc.yaml
 
 `update.sh` 会拉取 Git 中最新部署文件、拉取新镜像并替换容器，同时保留
 `runtime/` 中所有家庭数据。
+
+如果现有 `.env` 仍精确使用 `alexxit/go2rtc:1.9.14`，脚本会自动切换到
+Xiaomi 扬声器噪音修正版；其他用户自定义的 go2rtc 镜像不会被覆盖。
 
 开发调试时可显式从当前源码构建：
 

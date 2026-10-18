@@ -2,7 +2,10 @@ name: funwithcam
 
 services:
   go2rtc:
-    image: ${GO2RTC_IMAGE:-alexxit/go2rtc:1.9.14}
+    image: ${GO2RTC_IMAGE:-ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.1}
+    build:
+      context: .
+      dockerfile: Dockerfile.go2rtc
     restart: unless-stopped
     environment:
       TZ: ${TZ:-Asia/Shanghai}

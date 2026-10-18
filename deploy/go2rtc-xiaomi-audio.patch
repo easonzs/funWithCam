@@ -1,0 +1,57 @@
+diff --git a/pkg/xiaomi/miss/cs2/conn.go b/pkg/xiaomi/miss/cs2/conn.go
+index 2c1b395..ef9c1fa 100644
+--- a/pkg/xiaomi/miss/cs2/conn.go
++++ b/pkg/xiaomi/miss/cs2/conn.go
+@@ -265,7 +265,7 @@ func (c *Conn) WritePacket(hdr, payload []byte) error {
+ 	c.seqCh3++
+ 	binary.BigEndian.PutUint32(req[8:], n)
+ 	copy(req[offset:], hdr)
+-	copy(req[offset+hdrSize:], hdr)
++	copy(req[offset+hdrSize:], payload)
+ 
+ 	_, err := c.Conn.Write(req)
+ 	return err
+diff --git a/pkg/xiaomi/miss/cs2/conn_write_test.go b/pkg/xiaomi/miss/cs2/conn_write_test.go
+new file mode 100644
+index 0000000..65b5a08
+--- /dev/null
++++ b/pkg/xiaomi/miss/cs2/conn_write_test.go
+@@ -0,0 +1,38 @@
++package cs2
++
++import (
++	"bytes"
++	"io"
++	"net"
++	"testing"
++)
++
++func TestWritePacketIncludesPayload(t *testing.T) {
++	client, server := net.Pipe()
++	defer client.Close()
++	defer server.Close()
++
++	header := bytes.Repeat([]byte{0x11}, hdrSize)
++	payload := []byte{0xBA, 0x03, 0x10, 0x20, 0x30, 0x40}
++	conn := &Conn{Conn: client}
++
++	done := make(chan error, 1)
++	go func() {
++		done <- conn.WritePacket(header, payload)
++	}()
++
++	packet := make([]byte, 12+hdrSize+len(payload))
++	if _, err := io.ReadFull(server, packet); err != nil {
++		t.Fatal(err)
++	}
++	if err := <-done; err != nil {
++		t.Fatal(err)
++	}
++
++	if got := packet[12 : 12+hdrSize]; !bytes.Equal(got, header) {
++		t.Fatalf("media header mismatch: %x", got)
++	}
++	if got := packet[12+hdrSize:]; !bytes.Equal(got, payload) {
++		t.Fatalf("audio payload mismatch: got %x, want %x", got, payload)
++	}
++}

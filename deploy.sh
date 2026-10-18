@@ -83,9 +83,9 @@ docker compose config --quiet
 
 if [ "$BUILD_LOCAL" -eq 1 ]; then
     export FUNWITHCAM_IMAGE=funwithcam:local
-    echo "开发模式：拉取 go2rtc，并在本机从源码构建 FunWithCam 镜像。"
-    docker compose pull go2rtc
-    docker compose build funwithcam
+    export GO2RTC_IMAGE=go2rtc-xiaomi-audio:local
+    echo "开发模式：从源码构建 FunWithCam 和 Xiaomi 音频修正版 go2rtc。"
+    docker compose build go2rtc funwithcam
 else
     echo "正式模式：从镜像仓库拉取 FunWithCam 和 go2rtc。"
     if ! docker compose pull; then

@@ -15,6 +15,13 @@ if ! command -v docker >/dev/null 2>&1 \
 fi
 
 git pull --ff-only
+if grep -q '^GO2RTC_IMAGE=alexxit/go2rtc:1\.9\.14$' "$PROJECT_DIR/.env"; then
+    sed -i.bak \
+        's|^GO2RTC_IMAGE=alexxit/go2rtc:1\.9\.14$|GO2RTC_IMAGE=ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.1|' \
+        "$PROJECT_DIR/.env"
+    rm -f "$PROJECT_DIR/.env.bak"
+    echo "已切换到 Xiaomi 扬声器噪音修正版 go2rtc 镜像。"
+fi
 docker compose config --quiet
 docker compose pull
 docker compose up -d --remove-orphans

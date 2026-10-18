@@ -1,0 +1,26 @@
+FROM alexxit/go2rtc:1.9.14 AS build
+
+ARG GO2RTC_COMMIT=c245815e75e2a5fd60b4290f12bfc04e55a984d3
+ARG GOPROXY=https://proxy.golang.org,direct
+
+RUN apk add --no-cache git go
+
+WORKDIR /src
+
+RUN git clone https://github.com/AlexxIT/go2rtc.git . \
+    && git checkout "${GO2RTC_COMMIT}"
+
+COPY deploy/go2rtc-xiaomi-audio.patch /tmp/go2rtc-xiaomi-audio.patch
+
+RUN git apply --check /tmp/go2rtc-xiaomi-audio.patch \
+    && git apply /tmp/go2rtc-xiaomi-audio.patch \
+    && go test ./pkg/xiaomi/miss/cs2 \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go2rtc .
+
+FROM alexxit/go2rtc:1.9.14
+
+COPY --from=build /go2rtc /usr/local/bin/go2rtc
+
+LABEL org.opencontainers.image.description="go2rtc 1.9.14 Xiaomi CS2 speaker payload fix"
+LABEL org.opencontainers.image.source="https://github.com/easonzs/funWithCam"
+

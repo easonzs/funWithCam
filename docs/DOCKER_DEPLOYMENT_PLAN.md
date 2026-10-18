@@ -338,6 +338,11 @@ FunWithCam 容器使用 `espeak-ng` 在 `/app/audio` 生成临时 WAV；Compose 
 并已在真实设备完成播放验证。家长可在“配置 → 摄像头与声音”查看通道状态并
 点击“播放测试语音”；结果和输出来源会写入执行历史。
 
+官方 go2rtc 1.9.14 的 Xiaomi CS2 `WritePacket` 实现会把媒体头再次复制到
+payload，导致接口返回成功但摄像头只播放静态噪音。Compose 默认使用
+`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.1`：它基于固定上游提交，
+应用一行 payload 修复，并在镜像构建时运行对应 Go 回归测试。
+
 非 Docker 的 macOS 安装仍可设置 `audio.output_source: macbook`，继续使用
 本机 `say`。Docker Desktop 不透传 MacBook 扬声器，因此容器默认固定使用
 `camera`。
