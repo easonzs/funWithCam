@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -11,6 +12,11 @@ from typing import Optional
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+
+LOGGER = logging.getLogger(__name__)
+CAMERA_CONSUMER_RETRY_ATTEMPTS = 4
+CAMERA_CONSUMER_RETRY_DELAY_SECONDS = 2
 
 
 @dataclass(frozen=True)
@@ -77,26 +83,42 @@ def speak_to_camera(
         "{}/api/ffmpeg?{}".format(api, query),
         method="POST",
     )
-    try:
-        with urlopen(request, timeout=45) as response:
-            if response.status >= 400:
-                raise RuntimeError(
-                    "go2rtc camera playback returned HTTP {}".format(
-                        response.status
+    for attempt in range(1, CAMERA_CONSUMER_RETRY_ATTEMPTS + 1):
+        try:
+            with urlopen(request, timeout=45) as response:
+                if response.status >= 400:
+                    raise RuntimeError(
+                        "go2rtc camera playback returned HTTP {}".format(
+                            response.status
+                        )
                     )
-                )
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace").strip()
-        raise RuntimeError(
-            "摄像头播放失败，go2rtc 返回 HTTP {}{}。".format(
-                exc.code,
-                "：" + detail if detail else "",
+            return
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+            retryable = (
+                exc.code == 500
+                and "can't find consumer" in detail.lower()
+                and attempt < CAMERA_CONSUMER_RETRY_ATTEMPTS
             )
-        ) from exc
-    except URLError as exc:
-        raise RuntimeError(
-            "无法连接 go2rtc 播放接口：{}。".format(exc.reason)
-        ) from exc
+            if retryable:
+                LOGGER.warning(
+                    "go2rtc camera consumer is reconnecting; "
+                    "retrying playback (%s/%s)",
+                    attempt,
+                    CAMERA_CONSUMER_RETRY_ATTEMPTS,
+                )
+                time.sleep(CAMERA_CONSUMER_RETRY_DELAY_SECONDS)
+                continue
+            raise RuntimeError(
+                "摄像头播放失败，go2rtc 返回 HTTP {}{}。".format(
+                    exc.code,
+                    "：" + detail if detail else "",
+                )
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                "无法连接 go2rtc 播放接口：{}。".format(exc.reason)
+            ) from exc
 
 
 def inspect_camera_speaker(

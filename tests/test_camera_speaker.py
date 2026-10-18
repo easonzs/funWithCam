@@ -3,9 +3,11 @@ import os
 import tempfile
 import time
 import unittest
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 
 from funwithcam.audio import AudioOutput
@@ -17,6 +19,45 @@ from funwithcam.camera_speaker import (
 
 
 class CameraSpeakerTest(unittest.TestCase):
+    def test_retries_transient_missing_camera_consumer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            response = MagicMock()
+            response.status = 200
+            response.__enter__.return_value = response
+            missing_consumer = HTTPError(
+                "http://go2rtc:1984/api/ffmpeg",
+                500,
+                "Internal Server Error",
+                {},
+                BytesIO(b"can't find consumer\n"),
+            )
+            with (
+                patch(
+                    "funwithcam.camera_speaker.shutil.which",
+                    side_effect=lambda name: (
+                        "/usr/bin/espeak-ng"
+                        if name == "espeak-ng"
+                        else None
+                    ),
+                ),
+                patch("funwithcam.camera_speaker.subprocess.run"),
+                patch(
+                    "funwithcam.camera_speaker.urlopen",
+                    side_effect=[missing_consumer, response],
+                ) as open_url,
+                patch("funwithcam.camera_speaker.time.sleep") as sleep,
+            ):
+                speak_to_camera(
+                    "开始学习",
+                    api_url="http://go2rtc:1984",
+                    stream="study_room",
+                    local_audio_dir=Path(directory),
+                    go2rtc_audio_dir=Path("/media"),
+                )
+
+        self.assertEqual(2, open_url.call_count)
+        sleep.assert_called_once_with(2)
+
     def test_removes_old_wav_and_aiff_speech_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
