@@ -20,6 +20,7 @@ from funwithcam.storage.interaction_repository import (
     DialogueRepository,
     SpeechIntentRepository,
     TaskTypeRepository,
+    complete_confirmation_prompt,
 )
 
 
@@ -35,6 +36,16 @@ class RecordingPrechecks:
 
 
 class InteractionRepositoryTest(unittest.TestCase):
+    def test_confirmation_prompt_includes_spoken_reply_options(self):
+        self.assertEqual(
+            "你是要开始视频打卡吗？请说“确认打卡”，或者说“取消”。",
+            complete_confirmation_prompt(
+                "你是要开始视频打卡吗？请回答",
+                ["确认打卡", "开始打卡"],
+                ["取消", "不是"],
+            ),
+        )
+
     def test_speech_intent_configuration_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "test.db")
@@ -71,6 +82,10 @@ class InteractionRepositoryTest(unittest.TestCase):
         )
         self.assertEqual("always", intent["confirmation_mode"])
         self.assertEqual(["确认开始"], intent["confirm_phrases"])
+        self.assertEqual(
+            "要开始吗？请说“确认开始”，或者说“取消”。",
+            intent["confirmation_prompt"],
+        )
 
     def test_default_phrases_remain_when_custom_phrases_are_cleared(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -199,6 +214,32 @@ class SpeechInteractionTest(unittest.TestCase):
             self.assertTrue(handler.handle("确认开始"))
             self.assertEqual(2, len(prechecks.requests))
             self.assertIsNone(dialogues.get_active(session_date))
+
+    def test_invalid_confirmation_reply_waits_without_speaking_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, database_path, _, audio_output, handler = self._handler(
+                directory
+            )
+            dialogues = DialogueRepository(Database(database_path))
+
+            self.assertTrue(handler.handle("开始打卡"))
+            session_date = datetime.now(
+                ZoneInfo(config.timezone)
+            ).date().isoformat()
+            dialogue = dialogues.get_active(session_date)
+            first_retry_at = dialogue["next_prompt_at"]
+            self.assertEqual(
+                "你是要开始视频打卡吗？请说“确认打卡”，或者说“取消”。",
+                dialogue["prompt"],
+            )
+            audio_output.return_value.speak.reset_mock()
+
+            self.assertTrue(handler.handle("请回答"))
+
+            refreshed = dialogues.get(dialogue["id"])
+            audio_output.return_value.speak.assert_not_called()
+            self.assertEqual(1, refreshed["ask_count"])
+            self.assertEqual(first_retry_at, refreshed["next_prompt_at"])
 
     def test_conflicting_intents_are_not_executed(self):
         with tempfile.TemporaryDirectory() as directory:

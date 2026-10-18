@@ -22,6 +22,7 @@ from .storage.interaction_repository import (
     DEFAULT_SPEECH_PHRASES,
     DialogueRepository,
     SpeechIntentRepository,
+    complete_confirmation_prompt,
 )
 from .storage.study_session_repository import StudySessionRepository
 
@@ -220,7 +221,11 @@ class SpeechCommandHandler:
         if match.requires_confirmation:
             settings = self._family.get_settings()
             intent = match.intent or {}
-            prompt = intent["confirmation_prompt"]
+            prompt = complete_confirmation_prompt(
+                intent["confirmation_prompt"],
+                intent["confirm_phrases"],
+                intent["cancel_phrases"],
+            )
             self._dialogues.start(
                 session_date,
                 "command_confirmation",
@@ -338,7 +343,7 @@ class SpeechCommandHandler:
                     context.get("original_text", ""),
                     now,
                 )
-            return self._repeat_allowed_replies(dialogue, now)
+            return self._ignore_invalid_dialogue_reply(dialogue, now)
 
         if dialogue["dialogue_type"] == "finish_review":
             return self._handle_finish_review(dialogue, normalized, now)
@@ -425,7 +430,7 @@ class SpeechCommandHandler:
                 "cancelled",
             )
             return True
-        return self._repeat_allowed_replies(dialogue, now)
+        return self._ignore_invalid_dialogue_reply(dialogue, now)
 
     def _advance_finish_review(
         self,
@@ -695,7 +700,7 @@ class SpeechCommandHandler:
                         now,
                     )
                 return True
-        return self._repeat_allowed_replies(dialogue, now)
+        return self._ignore_invalid_dialogue_reply(dialogue, now)
 
     def _checkin_finish_phrases(self) -> list[str]:
         intent = self._intents.get(FINISH_CHECKIN)
@@ -745,12 +750,25 @@ class SpeechCommandHandler:
         self._speak_and_record(prompt, FINISH, "success")
         return True
 
-    def _repeat_allowed_replies(self, dialogue: dict, now: datetime) -> bool:
-        replies = "、".join(
-            "“{}”".format(item) for item in dialogue["allowed_replies"]
+    def _ignore_invalid_dialogue_reply(
+        self,
+        dialogue: dict,
+        now: datetime,
+    ) -> bool:
+        self._activities.record(
+            now,
+            "speech",
+            "dialogue_reply_ignored",
+            self._input_source,
+            "ignored",
+            "交互回复未匹配",
+            "保持等待，按配置时间再次询问。",
+            {
+                "dialogue_type": dialogue["dialogue_type"],
+                "dialogue_state": dialogue["state"],
+                "allowed_replies": dialogue["allowed_replies"],
+            },
         )
-        message = "我没有听到有效回答，请回答{}。".format(replies)
-        self._speak_and_record(message, "dialogue", "failed")
         return True
 
     def repeat_due_prompts(self) -> None:
@@ -1073,6 +1091,9 @@ class _CameraAudioInput:
         if sample is _CAMERA_AUDIO_END:
             raise RuntimeError("camera audio stream stopped")
         return sample
+
+    def get_nowait(self) -> object:
+        return self._queue.get_nowait()
 
     def close(self) -> None:
         self._stop.set()

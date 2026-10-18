@@ -58,6 +58,41 @@
               <p class="activity-summary">{{ event.summary }}</p>
             {% endif %}
             <p class="activity-meta">来源：{{ event.source_label }}</p>
+            {% if event.evidence %}
+              <details class="activity-evidence">
+                <summary>命中证据（{{ event.evidence|length }}张）</summary>
+                <p class="activity-evidence-note">图片、时间和判断值均保存在本机，仅登录家长账号后可查看。</p>
+                <div class="activity-evidence-grid">
+                  {% for evidence in event.evidence %}
+                    <figure>
+                      <a href="{{ evidence.image_url }}" target="_blank" rel="noopener">
+                        <img
+                          src="{{ evidence.image_url }}"
+                          alt="{{ event.title }}，{{ evidence.captured_time }} 的检测画面"
+                          loading="lazy"
+                        >
+                      </a>
+                      <figcaption>
+                        <time datetime="{{ evidence.captured_at }}">{{ evidence.captured_time }}</time>
+                        {% if evidence.measurements %}
+                          <dl>
+                            {% for measurement in evidence.measurements %}
+                              <div>
+                                <dt>{{ measurement.label }}</dt>
+                                <dd>
+                                  <span>实际 {{ measurement.actual }}</span>
+                                  <span>要求 {{ measurement.threshold }}</span>
+                                </dd>
+                              </div>
+                            {% endfor %}
+                          </dl>
+                        {% endif %}
+                      </figcaption>
+                    </figure>
+                  {% endfor %}
+                </div>
+              </details>
+            {% endif %}
             {% if event.details %}
               <details class="activity-details">
                 <summary>查看详情</summary>

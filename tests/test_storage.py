@@ -71,7 +71,7 @@ class DatabaseTest(unittest.TestCase):
                 count = connection.execute(
                     "SELECT COUNT(*) FROM schema_migrations"
                 ).fetchone()[0]
-        self.assertEqual(12, count)
+        self.assertEqual(13, count)
 
     def test_concurrent_connection_initialization(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -15,8 +15,10 @@ from funwithcam.speech import (
     SPEECH_COMMAND_GUIDE,
     SpeechCommandHandler,
     START,
+    _CameraAudioInput,
     _course_message,
     _camera_audio_command,
+    _discard_audio,
     _homework_message,
     parse_speech_command,
 )
@@ -151,6 +153,17 @@ class SpeechTest(unittest.TestCase):
             ],
             command,
         )
+
+    def test_discards_camera_audio_captured_during_speech_output(self):
+        camera_audio = _CameraAudioInput(
+            "rtsp://127.0.0.1:8554/study_room",
+            block_size=8000,
+        )
+        camera_audio._queue.put_nowait(("sample", 16000))
+
+        _discard_audio(camera_audio)
+
+        self.assertTrue(camera_audio._queue.empty())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Callable, Optional
 
 from .audio import AudioOutput
@@ -35,6 +36,7 @@ class PostureAssessment:
     deviation: Optional[float] = None
     closest_step: Optional[str] = None
     head_too_low: bool = False
+    measurements: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,13 @@ class LightAssessment:
     threshold: Optional[float] = None
 
 
+@dataclass(frozen=True)
+class EvidenceCandidate:
+    captured_at: datetime
+    image_bytes: bytes
+    measurements: tuple[dict, ...]
+
+
 def assess_posture(features: dict, calibration: Optional[dict]) -> PostureAssessment:
     steps = (calibration or {}).get("steps", {})
     candidates = []
@@ -52,6 +61,7 @@ def assess_posture(features: dict, calibration: Optional[dict]) -> PostureAssess
         baseline = steps.get(step_key, {}).get("features", {})
         feature_results = []
         center_distances = []
+        measurements = []
         head_too_low = False
         for key in POSTURE_FEATURES:
             statistics = baseline.get(key)
@@ -76,6 +86,14 @@ def assess_posture(features: dict, calibration: Optional[dict]) -> PostureAssess
             center_distances.append(
                 abs(value - float(statistics["median"])) / margin
             )
+            measurements.append(
+                {
+                    "key": key,
+                    "actual": value,
+                    "minimum": low,
+                    "maximum": high,
+                }
+            )
         if feature_results:
             candidates.append(
                 (
@@ -83,17 +101,25 @@ def assess_posture(features: dict, calibration: Optional[dict]) -> PostureAssess
                     sum(center_distances) / len(center_distances),
                     step_key,
                     head_too_low,
+                    tuple(measurements),
                 )
             )
     if not candidates:
         return PostureAssessment(False, False)
-    deviation, _center_distance, closest_step, head_too_low = min(candidates)
+    (
+        deviation,
+        _center_distance,
+        closest_step,
+        head_too_low,
+        measurements,
+    ) = min(candidates, key=lambda item: (item[0], item[1]))
     return PostureAssessment(
         True,
         deviation > 0,
         deviation,
         closest_step,
         head_too_low,
+        measurements,
     )
 
 
@@ -126,6 +152,7 @@ class StudyMonitor:
         sessions: StudySessionRepository,
         speech_templates: SpeechTemplateRepository,
         audio: AudioOutput,
+        evidence_dir: Optional[Path] = None,
         pose_factory: Callable[[float], object] = _PoseFeatureExtractor,
     ):
         self._config = config
@@ -135,6 +162,9 @@ class StudyMonitor:
         self._sessions = sessions
         self._speech_templates = speech_templates
         self._audio = audio
+        self._evidence_dir = (
+            None if evidence_dir is None else evidence_dir.resolve()
+        )
         self._pose_factory = pose_factory
         self._pose = None
         self._session_id: Optional[int] = None
@@ -146,6 +176,7 @@ class StudyMonitor:
         self._seat_leave_confirmed = False
         self._reminder_played_this_sample = False
         self._reported_skip_reasons: set[str] = set()
+        self._evidence_candidates: dict[str, list[EvidenceCandidate]] = {}
 
     def is_due(self, now_monotonic: float, interval_seconds: int) -> bool:
         return (
@@ -170,11 +201,24 @@ class StudyMonitor:
         self._reminder_played_this_sample = False
         pose_result = self._pose.extract(frame)
         if pose_result is None:
-            self._observe_absence(now, session, settings, "pose_not_detected")
+            self._observe_absence(
+                frame,
+                now,
+                session,
+                settings,
+                "pose_not_detected",
+            )
             return
-        features, _points, visibility = pose_result
+        features, points, visibility = pose_result
         if not _inside_study_area(features, self._config):
-            self._observe_absence(now, session, settings, "outside_study_area")
+            self._observe_absence(
+                frame,
+                now,
+                session,
+                settings,
+                "outside_study_area",
+                points,
+            )
             return
 
         self._observe_return(now)
@@ -190,6 +234,17 @@ class StudyMonitor:
 
         posture = assess_posture(features, self._calibration)
         if posture.decidable and posture.abnormal:
+            posture_window_minutes = int(
+                settings["posture_trigger_window_minutes"]
+            )
+            self._capture_evidence(
+                "posture_abnormal",
+                now,
+                frame,
+                points,
+                posture.measurements,
+                posture_window_minutes,
+            )
             self._record_anomaly(
                 now,
                 session,
@@ -207,9 +262,10 @@ class StudyMonitor:
                     "closest_baseline": posture.closest_step,
                     "head_too_low": posture.head_too_low,
                     "calibration_version_id": self._calibration_version_id,
+                    "measurements": list(posture.measurements),
                 },
                 int(settings["posture_trigger_count"]),
-                int(settings["posture_trigger_window_minutes"]),
+                posture_window_minutes,
                 int(settings["posture_reminder_cooldown_minutes"]),
                 "posture_abnormal",
                 posture_reminders_enabled,
@@ -238,6 +294,24 @@ class StudyMonitor:
                 light.threshold,
                 1.0,
             )
+            light_window_minutes = int(
+                settings["light_trigger_window_minutes"]
+            )
+            light_measurements = (
+                {
+                    "key": "brightness",
+                    "actual": brightness,
+                    "minimum": light.threshold,
+                },
+            )
+            self._capture_evidence(
+                "light_abnormal",
+                now,
+                frame,
+                points,
+                light_measurements,
+                light_window_minutes,
+            )
             self._record_anomaly(
                 now,
                 session,
@@ -251,9 +325,10 @@ class StudyMonitor:
                     "brightness": brightness,
                     "threshold": light.threshold,
                     "calibration_version_id": self._calibration_version_id,
+                    "measurements": list(light_measurements),
                 },
                 int(settings["light_trigger_count"]),
-                int(settings["light_trigger_window_minutes"]),
+                light_window_minutes,
                 int(settings["light_reminder_cooldown_minutes"]),
                 "light_abnormal",
                 True,
@@ -281,6 +356,7 @@ class StudyMonitor:
         self._seat_leave_confirmed = False
         self._reminder_played_this_sample = False
         self._reported_skip_reasons.clear()
+        self._evidence_candidates.clear()
 
     def _activate(self, session: dict) -> None:
         session_id = int(session["id"])
@@ -301,14 +377,33 @@ class StudyMonitor:
 
     def _observe_absence(
         self,
+        frame,
         now: datetime,
         session: dict,
         settings: dict,
         reason: str,
+        points: Optional[dict] = None,
     ) -> None:
         if self._absence_started_at is None:
             self._absence_started_at = now
         self._absence_samples += 1
+        seat_window_minutes = int(
+            settings["seat_leave_trigger_window_minutes"]
+        )
+        self._capture_evidence(
+            "seat_left",
+            now,
+            frame,
+            points or {},
+            (
+                {
+                    "key": "pose_detected",
+                    "actual": False,
+                    "expected": True,
+                },
+            ),
+            seat_window_minutes,
+        )
         if self._absence_samples >= 2 and not self._seat_leave_confirmed:
             self._seat_leave_confirmed = True
             self._record_anomaly(
@@ -325,7 +420,7 @@ class StudyMonitor:
                     "absence_started_at": self._absence_started_at.isoformat(),
                 },
                 int(settings["seat_leave_trigger_count"]),
-                int(settings["seat_leave_trigger_window_minutes"]),
+                seat_window_minutes,
                 int(settings["seat_leave_reminder_cooldown_minutes"]),
                 "seat_leave",
                 True,
@@ -367,9 +462,95 @@ class StudyMonitor:
                 "success",
                 "孩子已回到书桌区域",
             )
+        elif self._absence_samples:
+            self._evidence_candidates.pop("seat_left", None)
         self._absence_started_at = None
         self._absence_samples = 0
         self._seat_leave_confirmed = False
+
+    def _capture_evidence(
+        self,
+        event_type: str,
+        now: datetime,
+        frame,
+        points: dict,
+        measurements: tuple[dict, ...],
+        window_minutes: int,
+    ) -> None:
+        if self._evidence_dir is None:
+            return
+        try:
+            image_bytes = _encode_evidence_frame(
+                frame,
+                points,
+                self._config.study_area.rect,
+            )
+        except Exception:
+            LOGGER.warning(
+                "unable to prepare study monitor evidence frame",
+                exc_info=True,
+            )
+            return
+        since = now - timedelta(minutes=window_minutes)
+        candidates = [
+            candidate
+            for candidate in self._evidence_candidates.get(event_type, [])
+            if candidate.captured_at >= since
+        ]
+        candidates.append(
+            EvidenceCandidate(now, image_bytes, measurements)
+        )
+        self._evidence_candidates[event_type] = candidates[-30:]
+
+    def _save_evidence(
+        self,
+        event_type: str,
+        session_id: int,
+        now: datetime,
+        window_minutes: int,
+    ) -> list[dict]:
+        if self._evidence_dir is None:
+            return []
+        since = now - timedelta(minutes=window_minutes)
+        candidates = [
+            candidate
+            for candidate in self._evidence_candidates.pop(event_type, [])
+            if candidate.captured_at >= since
+        ]
+        if not candidates:
+            return []
+        event_directory = (
+            self._evidence_dir
+            / now.date().isoformat()
+            / "session-{}".format(session_id)
+            / event_type
+        )
+        try:
+            event_directory.mkdir(parents=True, exist_ok=True)
+            evidence = []
+            for index, candidate in enumerate(candidates, start=1):
+                filename = "{}_{}.jpg".format(
+                    candidate.captured_at.strftime("%H%M%S_%f"),
+                    index,
+                )
+                image_path = event_directory / filename
+                image_path.write_bytes(candidate.image_bytes)
+                evidence.append(
+                    {
+                        "captured_at": candidate.captured_at.isoformat(),
+                        "image_path": image_path.relative_to(
+                            self._evidence_dir
+                        ).as_posix(),
+                        "measurements": list(candidate.measurements),
+                    }
+                )
+            return evidence
+        except OSError:
+            LOGGER.warning(
+                "unable to save study monitor evidence",
+                exc_info=True,
+            )
+            return []
 
     def _record_anomaly(
         self,
@@ -454,6 +635,18 @@ class StudyMonitor:
                 settings["observation_interval_seconds"]
             ),
         }
+        should_record_activity = (
+            reminded or previous_count + 1 == trigger_count
+        )
+        if should_record_activity:
+            evidence = self._save_evidence(
+                event_type,
+                session_id,
+                now,
+                window_minutes,
+            )
+            if evidence:
+                payload["evidence"] = evidence
         self._observations.record(
             session_id,
             event_type,
@@ -465,7 +658,7 @@ class StudyMonitor:
             suppression_reason,
             payload,
         )
-        if reminded or previous_count + 1 == trigger_count:
+        if should_record_activity:
             activity_summary = summary
             if message is not None:
                 activity_summary = "{} 已播报：{}".format(summary, message)
@@ -506,3 +699,57 @@ class StudyMonitor:
             summary,
             {"study_session_id": int(session["id"])},
         )
+
+
+def _encode_evidence_frame(frame, points: dict, study_rect) -> bytes:
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError(
+            "opencv-contrib-python is required to save evidence"
+        ) from exc
+    annotated = frame.copy()
+    height, width = annotated.shape[:2]
+    x_min, y_min, x_max, y_max = study_rect
+    cv2.rectangle(
+        annotated,
+        (int(x_min * width), int(y_min * height)),
+        (int(x_max * width), int(y_max * height)),
+        (80, 210, 190),
+        2,
+    )
+    pixel_points = {}
+    for name, point in points.items():
+        x, y, visibility = point
+        if visibility < 0.40:
+            continue
+        pixel_points[name] = (int(x * width), int(y * height))
+        cv2.circle(
+            annotated,
+            pixel_points[name],
+            5,
+            (40, 170, 240),
+            -1,
+        )
+    for first, second in (
+        ("left_shoulder", "right_shoulder"),
+        ("left_hip", "right_hip"),
+        ("nose", "left_shoulder"),
+        ("nose", "right_shoulder"),
+    ):
+        if first in pixel_points and second in pixel_points:
+            cv2.line(
+                annotated,
+                pixel_points[first],
+                pixel_points[second],
+                (40, 170, 240),
+                2,
+            )
+    encoded, buffer = cv2.imencode(
+        ".jpg",
+        annotated,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 88],
+    )
+    if not encoded:
+        raise RuntimeError("unable to encode evidence image")
+    return buffer.tobytes()

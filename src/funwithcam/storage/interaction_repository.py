@@ -45,6 +45,30 @@ DEFAULT_SPEECH_PHRASES = {
 }
 
 
+def complete_confirmation_prompt(
+    prompt: str,
+    confirm_phrases: list[str],
+    cancel_phrases: list[str],
+) -> str:
+    prompt = prompt.strip()
+    if not confirm_phrases or not cancel_phrases:
+        return prompt
+    confirm_phrase = confirm_phrases[0]
+    cancel_phrase = cancel_phrases[0]
+    if confirm_phrase in prompt and cancel_phrase in prompt:
+        return prompt.replace("请回答", "请说", 1)
+    base = prompt.rstrip()
+    for trailing in ("请回答", "请说"):
+        if base.endswith(trailing):
+            base = base.removesuffix(trailing).rstrip("，, ")
+            break
+    return '{}请说“{}”，或者说“{}”。'.format(
+        base,
+        confirm_phrase,
+        cancel_phrase,
+    )
+
+
 class SpeechIntentRepository:
     def __init__(self, database: Database):
         self._database = database
@@ -98,6 +122,12 @@ class SpeechIntentRepository:
             not confirm_phrases or not cancel_phrases
         ):
             raise ValueError("需要二次确认的口令必须配置确认和取消回复")
+        if confirmation_mode != "never":
+            confirmation_prompt = complete_confirmation_prompt(
+                confirmation_prompt,
+                confirm_phrases,
+                cancel_phrases,
+            )
         with self._database.connection() as connection:
             updated = connection.execute(
                 """

@@ -696,6 +696,94 @@ class WebAppTest(unittest.TestCase):
         self.assertIn("关联口令", response.text)
         self.assertNotIn("首次提醒已播放", response.text)
 
+    def test_history_displays_authenticated_visual_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            database = Database(database_path)
+            database.initialize()
+            occurred_at = datetime(
+                2026,
+                10,
+                11,
+                18,
+                5,
+                tzinfo=ZoneInfo("Asia/Shanghai"),
+            )
+            AuthRepository(database).set_password(
+                "parent",
+                "long-password",
+                occurred_at,
+            )
+            evidence_path = (
+                database_path.parent
+                / "observation_evidence"
+                / "2026-10-11"
+                / "session-7"
+                / "posture_abnormal"
+                / "180500_000000_1.jpg"
+            )
+            evidence_path.parent.mkdir(parents=True)
+            evidence_path.write_bytes(b"visual-evidence")
+            relative_path = evidence_path.relative_to(
+                database_path.parent / "observation_evidence"
+            ).as_posix()
+            ActivityRepository(database).record(
+                occurred_at,
+                "anomaly",
+                "posture_abnormal",
+                "camera",
+                "info",
+                "姿势异常达到提醒条件",
+                "已保存两次命中证据。",
+                {
+                    "trigger_count": 2,
+                    "evidence": [
+                        {
+                            "captured_at": occurred_at.isoformat(),
+                            "image_path": relative_path,
+                            "measurements": [
+                                {
+                                    "key": "head_to_shoulder_ratio",
+                                    "actual": 0.10,
+                                    "minimum": 0.28,
+                                    "maximum": 0.56,
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+            app = create_app(
+                PROJECT_ROOT / "config" / "config.example.yaml",
+                database_path,
+                precheck_runner=_passed_precheck,
+            )
+
+            with TestClient(app) as client:
+                unauthenticated = client.get(
+                    "/history/evidence/{}".format(relative_path),
+                    follow_redirects=False,
+                )
+                client.post(
+                    "/login",
+                    data={"username": "parent", "password": "long-password"},
+                )
+                history = client.get(
+                    "/history?selected_date=2026-10-11&category=anomaly"
+                )
+                image = client.get(
+                    "/history/evidence/{}".format(relative_path)
+                )
+
+        self.assertEqual(303, unauthenticated.status_code)
+        self.assertEqual(200, history.status_code)
+        self.assertIn("命中证据（1张）", history.text)
+        self.assertIn("头部高度比例", history.text)
+        self.assertIn("0.100", history.text)
+        self.assertIn("0.280–0.560", history.text)
+        self.assertEqual(200, image.status_code)
+        self.assertEqual(b"visual-evidence", image.content)
+
     def test_rejects_post_without_csrf(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "test.db"

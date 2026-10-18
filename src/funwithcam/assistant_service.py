@@ -106,6 +106,7 @@ def run_assistant(
         study_sessions,
         speech_templates,
         audio,
+        evidence_dir=database_path.resolve().parent / "observation_evidence",
     )
     interval = 1.0 / config.video.inference_fps
     last_inference_at = 0.0

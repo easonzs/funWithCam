@@ -185,6 +185,13 @@ class StudyMonitorAssessmentTest(unittest.TestCase):
         self.assertTrue(result.decidable)
         self.assertTrue(result.abnormal)
         self.assertTrue(result.head_too_low)
+        head_measurement = next(
+            item
+            for item in result.measurements
+            if item["key"] == "head_to_shoulder_ratio"
+        )
+        self.assertEqual(0.10, head_measurement["actual"])
+        self.assertGreater(head_measurement["minimum"], 0.10)
 
     def test_light_uses_confirmed_normal_light_baseline(self):
         normal = assess_light(90.0, _calibration())
@@ -198,6 +205,8 @@ class StudyMonitorAssessmentTest(unittest.TestCase):
 
 class StudyMonitorRuntimeTest(unittest.TestCase):
     def _monitor(self, pose_results, calibration=None):
+        evidence_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(evidence_directory.cleanup)
         config = SimpleNamespace(
             person=SimpleNamespace(
                 min_detection_confidence=0.6,
@@ -219,6 +228,7 @@ class StudyMonitorRuntimeTest(unittest.TestCase):
             sessions,
             FakeTemplates(),
             audio,
+            evidence_dir=Path(evidence_directory.name),
             pose_factory=lambda _confidence: pose,
         )
         return monitor, pose, activities, observations, sessions, audio
@@ -312,9 +322,26 @@ class StudyMonitorRuntimeTest(unittest.TestCase):
         self.assertEqual(1, len(audio.messages))
         self.assertTrue(posture_events[1]["reminded"])
         self.assertEqual("cooldown", posture_events[2]["suppression_reason"])
+        activity_payload = _activities.events[0][0][7]
+        evidence = activity_payload["evidence"]
+        self.assertEqual(2, len(evidence))
+        self.assertTrue(
+            all(
+                (Path(monitor._evidence_dir) / item["image_path"]).is_file()
+                for item in evidence
+            )
+        )
+        self.assertEqual(
+            ["18:00:00", "18:00:10"],
+            [
+                datetime.fromisoformat(item["captured_at"]).strftime("%H:%M:%S")
+                for item in evidence
+            ],
+        )
+        self.assertTrue(evidence[0]["measurements"])
 
     def test_two_missing_pose_samples_confirm_leave_and_auto_pause(self):
-        monitor, pose, _activities, observations, sessions, audio = (
+        monitor, pose, activities, observations, sessions, audio = (
             self._monitor([None, None, None])
         )
         frame = numpy.full((20, 20, 3), 100, dtype=numpy.uint8)
@@ -341,9 +368,56 @@ class StudyMonitorRuntimeTest(unittest.TestCase):
             [("2026-10-13", now + timedelta(seconds=70), "camera")],
             sessions.pauses,
         )
+        evidence = activities.events[0][0][7]["evidence"]
+        self.assertEqual(2, len(evidence))
         monitor.deactivate()
         self.assertTrue(pose.closed)
         self.assertTrue(monitor.is_due(71.0, 10))
+
+    def test_light_threshold_saves_each_contributing_frame(self):
+        monitor, _pose, activities, observations, _sessions, audio = (
+            self._monitor(
+                [
+                    self._pose_result(head_ratio=0.72),
+                    self._pose_result(head_ratio=0.72),
+                ]
+            )
+        )
+        frame = numpy.full((20, 20, 3), 20, dtype=numpy.uint8)
+        now = datetime(2026, 10, 13, 18, 0, tzinfo=timezone.utc)
+
+        monitor.observe(
+            frame,
+            now,
+            0.0,
+            self._session(),
+            self._settings(),
+            True,
+        )
+        monitor.observe(
+            frame,
+            now + timedelta(seconds=10),
+            10.0,
+            self._session(),
+            self._settings(),
+            True,
+        )
+
+        light_events = [
+            event
+            for event in observations.events
+            if event["event_type"] == "light_abnormal"
+        ]
+        self.assertEqual(2, len(light_events))
+        self.assertEqual(1, len(audio.messages))
+        evidence = activities.events[0][0][7]["evidence"]
+        self.assertEqual(2, len(evidence))
+        self.assertEqual(
+            "brightness",
+            evidence[0]["measurements"][0]["key"],
+        )
+        self.assertEqual(20.0, evidence[0]["measurements"][0]["actual"])
+        self.assertEqual(76.0, evidence[0]["measurements"][0]["minimum"])
 
     def test_missing_calibration_is_recorded_without_posture_judgement(self):
         monitor, _pose, activities, observations, _sessions, audio = (

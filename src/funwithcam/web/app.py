@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, Optional
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
@@ -168,6 +168,9 @@ def create_app(
         ),
     )
     workflow = WorkflowRepository(database)
+    evidence_root = (
+        database_path.resolve().parent / "observation_evidence"
+    ).resolve()
     web_root = Path(__file__).resolve().parent
     templates = Jinja2Templates(directory=str(web_root / "templates"))
 
@@ -549,6 +552,7 @@ def create_app(
                 event["source"],
             )
             event["details"] = _activity_details(event["payload"])
+            event["evidence"] = _activity_evidence(event["payload"])
         return render_page(
             request,
             "history.html",
@@ -558,6 +562,22 @@ def create_app(
             selected_category=category,
             categories=ACTIVITY_CATEGORIES,
             events=events,
+        )
+
+    @app.get("/history/evidence/{evidence_path:path}")
+    def history_evidence(request: Request, evidence_path: str):
+        _require_session(request, auth, timezone)
+        target = (evidence_root / evidence_path).resolve()
+        try:
+            target.relative_to(evidence_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=404) from exc
+        if not target.is_file():
+            raise HTTPException(status_code=404)
+        return FileResponse(
+            target,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=3600"},
         )
 
     @app.get("/config", response_class=HTMLResponse)
@@ -1692,7 +1712,7 @@ def _activity_details(payload: dict) -> list[dict]:
     }
     details = []
     for key, value in payload.items():
-        if value is None:
+        if value is None or key in {"evidence", "measurements"}:
             continue
         if key in ratio_keys:
             display_value = "{:.0f}%".format(float(value) * 100)
@@ -1709,6 +1729,82 @@ def _activity_details(payload: dict) -> list[dict]:
             }
         )
     return details
+
+
+def _activity_evidence(payload: dict) -> list[dict]:
+    raw_evidence = payload.get("evidence")
+    if not isinstance(raw_evidence, list):
+        return []
+    evidence = []
+    for item in raw_evidence:
+        if not isinstance(item, dict):
+            continue
+        image_path = str(item.get("image_path", "")).strip()
+        captured_at = str(item.get("captured_at", "")).strip()
+        if not image_path or not captured_at:
+            continue
+        measurements = [
+            formatted
+            for measurement in item.get("measurements", [])
+            if isinstance(measurement, dict)
+            for formatted in [_format_evidence_measurement(measurement)]
+            if formatted is not None
+        ]
+        evidence.append(
+            {
+                "captured_at": captured_at,
+                "captured_time": captured_at[11:19],
+                "image_url": "/history/evidence/{}".format(
+                    quote(image_path, safe="/")
+                ),
+                "measurements": measurements,
+            }
+        )
+    return evidence
+
+
+def _format_evidence_measurement(measurement: dict) -> Optional[dict]:
+    labels = {
+        "head_to_shoulder_ratio": "头部高度比例",
+        "shoulder_slope": "肩线倾斜",
+        "torso_offset_ratio": "躯干偏移",
+        "brightness": "书桌区域亮度",
+        "pose_detected": "姿态检测",
+    }
+    key = str(measurement.get("key", "")).strip()
+    if not key or "actual" not in measurement:
+        return None
+    actual = _format_measurement_value(measurement["actual"])
+    if "minimum" in measurement and "maximum" in measurement:
+        threshold = "{}–{}".format(
+            _format_measurement_value(measurement["minimum"]),
+            _format_measurement_value(measurement["maximum"]),
+        )
+    elif "minimum" in measurement:
+        threshold = "≥ {}".format(
+            _format_measurement_value(measurement["minimum"])
+        )
+    elif "maximum" in measurement:
+        threshold = "≤ {}".format(
+            _format_measurement_value(measurement["maximum"])
+        )
+    elif "expected" in measurement:
+        threshold = _format_measurement_value(measurement["expected"])
+    else:
+        threshold = "—"
+    return {
+        "label": labels.get(key, key),
+        "actual": actual,
+        "threshold": threshold,
+    }
+
+
+def _format_measurement_value(value) -> str:
+    if isinstance(value, bool):
+        return "已检测到" if value else "未检测到"
+    if isinstance(value, (int, float)):
+        return "{:.3f}".format(float(value))
+    return str(value)
 
 
 def _run_assistant_thread(
