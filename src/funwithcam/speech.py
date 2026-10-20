@@ -5,9 +5,12 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from .audio import AudioOutput
@@ -38,6 +41,28 @@ QUERY_HOMEWORK = "query_homework"
 QUERY_COURSES = "query_courses"
 START_CHECKIN = "start_checkin"
 FINISH_CHECKIN = "finish_checkin"
+PTZ_LEFT = "ptz_left"
+PTZ_RIGHT = "ptz_right"
+PTZ_UP = "ptz_up"
+PTZ_DOWN = "ptz_down"
+PTZ_ARM = "ptz_arm"
+
+# 摄像头调整模式的有效窗口（秒）：启动后窗口内转向口令直接生效。
+PTZ_ARM_WINDOW_SECONDS = 60
+
+# go2rtc 云台操作编码：1 左 2 右 3 上 4 下
+PTZ_OPERATION = {
+    PTZ_LEFT: "1",
+    PTZ_RIGHT: "2",
+    PTZ_UP: "3",
+    PTZ_DOWN: "4",
+}
+PTZ_DIRECTION_LABEL = {
+    PTZ_LEFT: "左",
+    PTZ_RIGHT: "右",
+    PTZ_UP: "上",
+    PTZ_DOWN: "下",
+}
 
 SPEECH_COMMAND_GUIDE = (
     {
@@ -87,6 +112,36 @@ SPEECH_COMMAND_GUIDE = (
         "label": "结束打卡",
         "phrases": DEFAULT_SPEECH_PHRASES[FINISH_CHECKIN],
         "description": "仅在视频打卡录制中停止录制并保存视频。",
+    },
+    {
+        "command": PTZ_LEFT,
+        "label": "摄像头向左",
+        "phrases": DEFAULT_SPEECH_PHRASES[PTZ_LEFT],
+        "description": "控制云台向左转动一段。",
+    },
+    {
+        "command": PTZ_RIGHT,
+        "label": "摄像头向右",
+        "phrases": DEFAULT_SPEECH_PHRASES[PTZ_RIGHT],
+        "description": "控制云台向右转动一段。",
+    },
+    {
+        "command": PTZ_UP,
+        "label": "摄像头向上",
+        "phrases": DEFAULT_SPEECH_PHRASES[PTZ_UP],
+        "description": "控制云台向上转动一段。",
+    },
+    {
+        "command": PTZ_DOWN,
+        "label": "摄像头向下",
+        "phrases": DEFAULT_SPEECH_PHRASES[PTZ_DOWN],
+        "description": "控制云台向下转动一段。",
+    },
+    {
+        "command": PTZ_ARM,
+        "label": "摄像头调整",
+        "phrases": DEFAULT_SPEECH_PHRASES[PTZ_ARM],
+        "description": "开启摄像头调整模式，60 秒内转向口令直接生效。",
     },
 )
 
@@ -166,6 +221,7 @@ class SpeechCommandHandler:
     ):
         database = Database(database_path)
         database.initialize()
+        self._config = config
         self._timezone = ZoneInfo(config.timezone)
         self._activities = ActivityRepository(database)
         self._family = FamilyRepository(database)
@@ -185,6 +241,8 @@ class SpeechCommandHandler:
             if config.speech.input_source == "camera"
             else "macbook_microphone"
         )
+        # 摄像头调整模式：ptz_arm 启动后，窗口内转向口令直接生效。
+        self._ptz_armed_until = None
 
     def handle(self, text: str) -> bool:
         now = datetime.now(self._timezone)
@@ -218,6 +276,21 @@ class SpeechCommandHandler:
             text,
             {"command": command, "match_quality": match.quality},
         )
+        if command == PTZ_ARM:
+            return self._execute(command, text, now)
+        if command in PTZ_OPERATION and not self._ptz_armed():
+            # 未启动摄像头调整模式：静默忽略转向口令（记日志，不播报不转动）。
+            self._activities.record(
+                now,
+                "speech",
+                "speech_ptz_blocked",
+                self._input_source,
+                "ignored",
+                "转向口令未在摄像头调整窗口内",
+                text,
+                {"command": command},
+            )
+            return True
         if match.requires_confirmation:
             settings = self._family.get_settings()
             intent = match.intent or {}
@@ -292,6 +365,15 @@ class SpeechCommandHandler:
                 return self._start_checkin(original_text, now)
             elif command == FINISH_CHECKIN:
                 raise ValueError("video checkin is not recording")
+            elif command in PTZ_OPERATION:
+                self._ptz_move(command)
+                # 转动后不做语音回应，保持安静。
+                return True
+            elif command == PTZ_ARM:
+                self._ptz_arm()
+                message = "{}，摄像头调整已开启，60 秒内请说转向口令。".format(
+                    child_name
+                )
             else:
                 raise ValueError("unknown speech command")
         except ValueError:
@@ -305,6 +387,41 @@ class SpeechCommandHandler:
 
         self._speak_and_record(message, command, "success")
         return True
+
+    def _ptz_armed(self) -> bool:
+        """当前是否处于摄像头调整模式窗口内。"""
+        if self._ptz_armed_until is None:
+            return False
+        return datetime.now(self._timezone) < self._ptz_armed_until
+
+    def _ptz_arm(self) -> None:
+        """开启摄像头调整模式窗口。"""
+        self._ptz_armed_until = datetime.now(self._timezone) + timedelta(
+            seconds=PTZ_ARM_WINDOW_SECONDS
+        )
+
+    def _ptz_move(self, command: str) -> None:
+        """通过 go2rtc 的 motor API 驱动云台转动。
+
+        命令走已建立的拉流会话（学习时 FunWithCam 持续拉流，满足该前提）。
+        """
+        operation = PTZ_OPERATION[command]
+        query = urlencode(
+            {
+                "src": self._config.audio.camera_stream,
+                "operation": operation,
+            }
+        )
+        url = "{}/api/xiaomi/motor?{}".format(
+            self._config.audio.camera_api_url,
+            query,
+        )
+        request = Request(url, method="POST")
+        try:
+            with urlopen(request, timeout=8) as response:
+                response.read()
+        except (URLError, HTTPError, OSError) as exc:
+            raise ValueError("go2rtc motor request failed") from exc
 
     def _handle_dialogue(
         self,
