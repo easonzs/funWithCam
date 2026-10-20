@@ -11,6 +11,7 @@ on:
       - Dockerfile
       - Dockerfile.go2rtc
       - deploy/go2rtc-xiaomi-audio.patch
+      - deploy/go2rtc-xiaomi-ptz.patch
       - pyproject.toml
       - README.md
       - src/**
@@ -78,4 +79,4 @@ jobs:
           file: Dockerfile.go2rtc
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3
+          tags: ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-ptz.1

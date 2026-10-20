@@ -255,9 +255,9 @@ go2rtc 负责：
 - 暴露媒体包数，帮助判断摄像头是否真的持续输出。
 
 正式部署不直接使用官方 go2rtc 1.9.14，而使用
-`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3`。GitHub Actions 以
+`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-ptz.1`。GitHub Actions 以
 `golang:1.24.9-alpine` 为构建阶段，通过 Go Modules 下载依赖、应用仓库中的
-Xiaomi 音频补丁并执行 Go 测试；最终运行阶段基于
+Xiaomi 音频与 PTZ 补丁并执行 Go 测试；最终运行阶段基于
 `alexxit/go2rtc:1.9.14`，只复制编译后的 go2rtc 二进制。因此新 Mac 只拉取
 最终镜像，不需要安装 Go，也不会在启动时下载 Go 依赖。两个最终镜像均构建
 `linux/amd64` 和 `linux/arm64`。
@@ -346,7 +346,7 @@ FunWithCam 容器使用 `espeak-ng` 在 `/app/audio` 生成临时 WAV；Compose 
 
 官方 go2rtc 1.9.14 的 Xiaomi CS2 `WritePacket` 实现会把媒体头再次复制到
 payload，导致接口返回成功但摄像头只播放静态噪音。Compose 默认使用
-`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3`：它基于固定上游提交，
+`ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-ptz.1`：它基于固定上游提交，
 应用 payload 修复，并为 `chuangmi.camera.061a01` 使用 40ms Opus 封包；
 镜像构建时会运行对应 Go 回归测试。
 
@@ -431,7 +431,7 @@ name: funwithcam
 
 services:
   go2rtc:
-    image: ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3
+    image: ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-ptz.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:1984:1984"

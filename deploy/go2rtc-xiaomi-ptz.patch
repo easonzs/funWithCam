@@ -1,0 +1,538 @@
+diff --git a/internal/streams/stream.go b/internal/streams/stream.go
+index 984c73e..1cc628c 100644
+--- a/internal/streams/stream.go
++++ b/internal/streams/stream.go
+@@ -47,6 +47,21 @@ func NewStream(source any) *Stream {
+ 	}
+ }
+ 
++// Conns returns the live connections of this stream's producers (nil for
++// producers that are not connected), so a module can reach a source's own
++// control channel -- e.g. a camera's motor -- over the session already open.
++func (s *Stream) Conns() []core.Producer {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	conns := make([]core.Producer, 0, len(s.producers))
++	for _, prod := range s.producers {
++		prod.mu.Lock()
++		conns = append(conns, prod.conn)
++		prod.mu.Unlock()
++	}
++	return conns
++}
++
+ func (s *Stream) Sources() []string {
+ 	sources := make([]string, 0, len(s.producers))
+ 	for _, prod := range s.producers {
+diff --git a/internal/xiaomi/xiaomi.go b/internal/xiaomi/xiaomi.go
+index 1e57842..48c5398 100644
+--- a/internal/xiaomi/xiaomi.go
++++ b/internal/xiaomi/xiaomi.go
+@@ -1,14 +1,17 @@
+ package xiaomi
+ 
+ import (
++	"context"
+ 	"encoding/hex"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"net/http"
+ 	"net/url"
++	"strconv"
+ 	"strings"
+ 	"sync"
++	"time"
+ 
+ 	"github.com/AlexxIT/go2rtc/internal/api"
+ 	"github.com/AlexxIT/go2rtc/internal/app"
+@@ -16,6 +19,7 @@ import (
+ 	"github.com/AlexxIT/go2rtc/pkg/core"
+ 	"github.com/AlexxIT/go2rtc/pkg/xiaomi"
+ 	"github.com/AlexxIT/go2rtc/pkg/xiaomi/crypto"
++	"github.com/AlexxIT/go2rtc/pkg/xiaomi/miss"
+ 	"github.com/rs/zerolog"
+ )
+ 
+@@ -48,6 +52,108 @@ func Init() {
+ 	})
+ 
+ 	api.HandleFunc("api/xiaomi", apiXiaomi)
++	api.HandleFunc("api/xiaomi/motor", apiMotor)
++}
++
++// Motorer is a source that can move its camera one pan/tilt step, and report
++// the current position. Duck-typed so this module doesn't import pkg/xiaomi.
++type Motorer interface {
++	PTZState() miss.PTZState
++	Move(direction string) error
++	RefreshPosition(ctx context.Context) (*miss.PTZPosition, error)
++}
++
++// Motor moves the camera behind stream `name` one step, or reads its current
++// position when `read` is set. It uses the session the stream already holds,
++// so the stream must be running (someone consuming it).
++func Motor(name string, operation int) error {
++	stream := streams.Get(name)
++	if stream == nil {
++		return fmt.Errorf("xiaomi: motor: no stream %q", name)
++	}
++	for _, conn := range stream.Conns() {
++		if m, ok := conn.(Motorer); ok {
++			return m.Move(operationName(operation))
++		}
++	}
++	return fmt.Errorf("xiaomi: motor: stream %q has no connected source with a motor", name)
++}
++
++func operationName(op int) string {
++	switch op {
++	case 1:
++		return "left"
++	case 2:
++		return "right"
++	case 3:
++		return "up"
++	case 4:
++		return "down"
++	}
++	return fmt.Sprintf("%d", op)
++}
++
++// apiMotor:
++//
++//	POST /api/xiaomi/motor?src=<stream>&operation=<1 left|2 right|3 up|4 down>
++//	GET  /api/xiaomi/motor?src=<stream>&read=1   -> current position
++func apiMotor(w http.ResponseWriter, r *http.Request) {
++	src := r.URL.Query().Get("src")
++	stream := streams.Get(src)
++	if stream == nil {
++		http.Error(w, fmt.Sprintf("xiaomi: motor: no stream %q", src), http.StatusNotFound)
++		return
++	}
++
++	// Find a connected motor source on this stream.
++	var ctrl Motorer
++	for _, conn := range stream.Conns() {
++		if m, ok := conn.(Motorer); ok {
++			ctrl = m
++			break
++		}
++	}
++	if ctrl == nil {
++		http.Error(w, fmt.Sprintf("xiaomi: motor: stream %q has no connected source with a motor", src), http.StatusNotFound)
++		return
++	}
++
++	switch r.Method {
++	case "GET":
++		if r.URL.Query().Get("read") != "" {
++			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
++			defer cancel()
++			position, err := ctrl.RefreshPosition(ctx)
++			if err != nil {
++				http.Error(w, err.Error(), http.StatusInternalServerError)
++				return
++			}
++			api.ResponseJSON(w, position)
++			return
++		}
++		state := ctrl.PTZState()
++		api.ResponseJSON(w, state)
++
++	case "POST":
++		operation := r.URL.Query().Get("operation")
++		if operation == "" {
++			http.Error(w, "missing operation (1 left, 2 right, 3 up, 4 down)", http.StatusBadRequest)
++			return
++		}
++		if err := ctrl.Move(operationName(int(mustAtoi(operation)))); err != nil {
++			http.Error(w, err.Error(), http.StatusBadRequest)
++			return
++		}
++		api.ResponseJSON(w, map[string]any{"ok": true, "operation": operation})
++
++	default:
++		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
++	}
++}
++
++func mustAtoi(s string) int {
++	n, _ := strconv.Atoi(s)
++	return n
+ }
+ 
+ var log zerolog.Logger
+diff --git a/pkg/xiaomi/miss/client.go b/pkg/xiaomi/miss/client.go
+index 8a7a44f..979ee35 100644
+--- a/pkg/xiaomi/miss/client.go
++++ b/pkg/xiaomi/miss/client.go
+@@ -2,12 +2,15 @@ package miss
+ 
+ import (
+ 	"bytes"
++	"context"
+ 	"encoding/binary"
+ 	"encoding/hex"
++	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"net"
+ 	"net/url"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/AlexxIT/go2rtc/pkg/tutk"
+@@ -72,13 +75,29 @@ func NewClient(rawURL string) (*Client, error) {
+ 		return nil, err
+ 	}
+ 
+-	return &Client{Conn: conn, key: key, model: model}, nil
++	client := &Client{
++		Conn:  conn,
++		key:   key,
++		model: model,
++		done:  make(chan struct{}),
++	}
++	go client.commandLoop()
++	return client, nil
+ }
+ 
+ type Client struct {
+ 	Conn
+ 	key   []byte
+ 	model string
++
++	motorMu sync.Mutex
++	stateMu sync.RWMutex
++
++	position *PTZPosition
++	waiter   chan motorResult
++
++	done      chan struct{}
++	closeOnce sync.Once
+ }
+ 
+ const (
+@@ -134,6 +153,15 @@ func (c *Client) WriteCommand(data []byte) error {
+ 	return c.Conn.WriteCommand(cmdEncoded, data)
+ }
+ 
++func (c *Client) Close() error {
++	var err error
++	c.closeOnce.Do(func() {
++		err = c.Conn.Close()
++	})
++	<-c.done
++	return err
++}
++
+ const (
+ 	ModelDafang  = "isa.camera.df3"
+ 	ModelLoockV2 = "loock.cateye.v02"
+@@ -145,6 +173,50 @@ const (
+ 	ModelXiaofang = "isa.camera.isc5c1"
+ )
+ 
++// Xiaomi Home PTZ operations for MISS_CMD_MOTOR_REQ / MISS_CMD_MOTOR_RESP.
++// These are the operations the Mi Home app sends to pan/tilt cameras.
++// Hardware-verified on xiaomi.camera.c01a01 (see go2rtc PR #2531 comments).
++// angle/elevation are Xiaomi coordinates (1..101), not verified physical degrees.
++const (
++	motorLeft  = 1
++	motorRight = 2
++	motorUp    = 3
++	motorDown  = 4
++	motorGet   = 6
++
++	positionMin = 1
++	positionMax = 101
++)
++
++type PTZPosition struct {
++	Angle     int       `json:"angle"`
++	Elevation int       `json:"elevation"`
++	Ret       int       `json:"ret"`
++	UpdatedAt time.Time `json:"updated_at"`
++}
++
++type PTZState struct {
++	Connected bool
++	Position  *PTZPosition
++}
++
++type motorPayload struct {
++	Operation int  `json:"operation"`
++	Angle     *int `json:"angle,omitempty"`
++	Elevation *int `json:"elevation,omitempty"`
++}
++
++type motorResult struct {
++	position *PTZPosition
++	err      error
++}
++
++type motorResponse struct {
++	Angle     *int `json:"angle"`
++	Elevation *int `json:"elevation"`
++	Ret       *int `json:"ret"`
++}
++
+ func (c *Client) StartMedia(channel, quality, audio string) error {
+ 	switch c.model {
+ 	case ModelDafang, ModelXiaofang:
+@@ -194,6 +266,201 @@ func (c *Client) StartMedia(channel, quality, audio string) error {
+ 	return c.WriteCommand(data)
+ }
+ 
++// PTZState returns the last known pan/tilt state and whether the session is up.
++func (c *Client) PTZState() PTZState {
++	c.stateMu.RLock()
++	defer c.stateMu.RUnlock()
++
++	var position *PTZPosition
++	if c.position != nil {
++		copy := *c.position
++		position = &copy
++	}
++
++	return PTZState{
++		Connected: c.Connected(),
++		Position:  position,
++	}
++}
++
++func (c *Client) Connected() bool {
++	select {
++	case <-c.done:
++		return false
++	default:
++		return true
++	}
++}
++
++// Move pans/tilts one step, the same way the Mi Home app does:
++// left / right / up / down.
++func (c *Client) Move(direction string) error {
++	var operation int
++
++	switch direction {
++	case "left":
++		operation = motorLeft
++	case "right":
++		operation = motorRight
++	case "up":
++		operation = motorUp
++	case "down":
++		operation = motorDown
++	default:
++		return fmt.Errorf("xiaomi ptz: invalid direction %q", direction)
++	}
++
++	return c.runMotorCommand(operation, nil, nil)
++}
++
++// RefreshPosition reads the current pan/tilt position from the camera
++// (operation 6). Returns the next MOTOR_RESP received after the request.
++func (c *Client) RefreshPosition(ctx context.Context) (*PTZPosition, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++
++	c.motorMu.Lock()
++	defer c.motorMu.Unlock()
++
++	waiter := make(chan motorResult, 1)
++	c.setWaiter(waiter)
++
++	if err := c.sendMotorCommand(motorGet, nil, nil); err != nil {
++		c.clearWaiter(waiter)
++		return nil, err
++	}
++
++	select {
++	case result := <-waiter:
++		return result.position, result.err
++	case <-ctx.Done():
++		c.clearWaiter(waiter)
++		return nil, ctx.Err()
++	}
++}
++
++func (c *Client) runMotorCommand(operation int, angle, elevation *int) error {
++	c.motorMu.Lock()
++	defer c.motorMu.Unlock()
++	return c.sendMotorCommand(operation, angle, elevation)
++}
++
++func (c *Client) sendMotorCommand(operation int, angle, elevation *int) error {
++	payload, err := motorCommandPayload(operation, angle, elevation)
++	if err != nil {
++		return err
++	}
++
++	data := binary.BigEndian.AppendUint32(nil, cmdMotorReq)
++	data = append(data, payload...)
++	return c.WriteCommand(data)
++}
++
++func motorCommandPayload(operation int, angle, elevation *int) ([]byte, error) {
++	return json.Marshal(motorPayload{
++		Operation: operation,
++		Angle:     angle,
++		Elevation: elevation,
++	})
++}
++
++func (c *Client) commandLoop() {
++	defer close(c.done)
++
++	for {
++		cmd, data, err := c.Conn.ReadCommand()
++		if err != nil {
++			c.resolveWaiter(motorResult{err: err})
++			return
++		}
++
++		cmd, data, err = c.decodeCommand(cmd, data)
++		if err != nil {
++			c.resolveWaiter(motorResult{err: err})
++			continue
++		}
++
++		if cmd != cmdMotorRes {
++			continue
++		}
++
++		position, err := parseMotorResponse(data)
++		if err == nil {
++			c.stateMu.Lock()
++			c.position = position
++			c.stateMu.Unlock()
++		}
++
++		c.resolveWaiter(motorResult{position: position, err: err})
++	}
++}
++
++func (c *Client) decodeCommand(cmd uint32, data []byte) (uint32, []byte, error) {
++	if cmd != cmdEncoded {
++		return cmd, data, nil
++	}
++
++	data, err := crypto.Decode(data, c.key)
++	if err != nil {
++		return 0, nil, err
++	}
++	if len(data) < 4 {
++		return 0, nil, errors.New("xiaomi ptz: encoded command too small")
++	}
++
++	return binary.BigEndian.Uint32(data), data[4:], nil
++}
++
++func parseMotorResponse(data []byte) (*PTZPosition, error) {
++	data = bytes.TrimRight(data, "\x00")
++
++	var response motorResponse
++	if err := json.Unmarshal(data, &response); err != nil {
++		return nil, fmt.Errorf("xiaomi ptz: malformed motor response: %w", err)
++	}
++	if response.Angle == nil || response.Elevation == nil || response.Ret == nil {
++		return nil, errors.New("xiaomi ptz: malformed motor response: missing fields")
++	}
++
++	angle, elevation := *response.Angle, *response.Elevation
++	if angle < 0 || angle > 101 || elevation < 0 || elevation > 101 {
++		return nil, fmt.Errorf("xiaomi ptz: malformed motor response: angle=%d elevation=%d", angle, elevation)
++	}
++
++	return &PTZPosition{
++		Angle:     angle,
++		Elevation: elevation,
++		Ret:       *response.Ret,
++		UpdatedAt: time.Now().UTC(),
++	}, nil
++}
++
++func (c *Client) setWaiter(waiter chan motorResult) {
++	c.stateMu.Lock()
++	c.waiter = waiter
++	c.stateMu.Unlock()
++}
++
++func (c *Client) clearWaiter(waiter chan motorResult) {
++	c.stateMu.Lock()
++	if c.waiter == waiter {
++		c.waiter = nil
++	}
++	c.stateMu.Unlock()
++}
++
++func (c *Client) resolveWaiter(result motorResult) {
++	c.stateMu.Lock()
++	waiter := c.waiter
++	c.waiter = nil
++	c.stateMu.Unlock()
++
++	if waiter != nil {
++		waiter <- result
++	}
++}
++
+ func (c *Client) StopMedia() error {
+ 	data := binary.BigEndian.AppendUint32(nil, cmdVideoStop)
+ 	return c.WriteCommand(data)
+diff --git a/pkg/xiaomi/miss/cs2/conn.go b/pkg/xiaomi/miss/cs2/conn.go
+index ef9c1fa..4c3f7c6 100644
+--- a/pkg/xiaomi/miss/cs2/conn.go
++++ b/pkg/xiaomi/miss/cs2/conn.go
+@@ -197,7 +197,12 @@ func (c *Conn) ReadCommand() (cmd uint32, data []byte, err error) {
+ 	if !ok {
+ 		return 0, nil, c.Error()
+ 	}
+-	cmd = binary.LittleEndian.Uint32(buf)
++	// Command IDs over CS2 are big-endian (e.g. a command frame starts with
++	// 00 00 10 01 for cmdEncoded, 00 00 01 13 for cmdMotorRes). LittleEndian
++	// would garble any id above 0xFF, so motor responses (0x113) could not be
++	// matched. The only prior consumer (login) only does bytes.Contains on data
++	// and is unaffected.
++	cmd = binary.BigEndian.Uint32(buf)
+ 	data = buf[4:]
+ 	return
+ }
+diff --git a/pkg/xiaomi/miss/producer.go b/pkg/xiaomi/miss/producer.go
+index dcea284..74855d6 100644
+--- a/pkg/xiaomi/miss/producer.go
++++ b/pkg/xiaomi/miss/producer.go
+@@ -1,6 +1,7 @@
+ package miss
+ 
+ import (
++	"context"
+ 	"fmt"
+ 	"net/url"
+ 	"time"
+@@ -198,6 +199,22 @@ func (p *Producer) Stop() error {
+ 	return p.Connection.Stop()
+ }
+ 
++// PTZ passthrough: motor commands must travel over the session the stream
++// already holds -- the camera accepts a single P2P session, and dialing a
++// second one drops the video. These methods expose the client's motor channel.
++
++func (p *Producer) PTZState() PTZState {
++	return p.client.PTZState()
++}
++
++func (p *Producer) Move(direction string) error {
++	return p.client.Move(direction)
++}
++
++func (p *Producer) RefreshPosition(ctx context.Context) (*PTZPosition, error) {
++	return p.client.RefreshPosition(ctx)
++}
++
+ // TimeToRTP convert time in milliseconds to RTP time
+ func TimeToRTP(timeMS, clockRate uint64) uint32 {
+ 	return uint32(timeMS * clockRate / 1000)
