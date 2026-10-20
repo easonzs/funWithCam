@@ -32,6 +32,13 @@ calibration:
   min_valid_samples: 12
   image_dir: data/calibrations
 
+checkin_ptz:
+  enabled: false
+  tilt_steps: 3
+  step_delay_seconds: 0.5
+  restore_tolerance: 2
+  restore_max_attempts: 3
+
 audio:
   output_source: camera
   # command 仅在切回 macbook 模式时使用；Docker 默认通过摄像头播报。

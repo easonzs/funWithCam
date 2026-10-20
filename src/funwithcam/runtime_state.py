@@ -4,6 +4,7 @@ import threading
 _CALIBRATION_ACTIVE = threading.Event()
 _ASSISTANT_RUNNING = threading.Event()
 _ASSISTANT_PAUSED = threading.Event()
+_CHECKIN_PTZ_ACTIVE = threading.Event()
 
 
 def set_calibration_active(active: bool) -> None:
@@ -15,6 +16,18 @@ def set_calibration_active(active: bool) -> None:
 
 def calibration_active() -> bool:
     return _CALIBRATION_ACTIVE.is_set()
+
+
+def set_checkin_ptz_active(active: bool) -> None:
+    """打卡低头期间置位：助手在此时停止姿态/在座观测，避免拍到桌面产生假数据。"""
+    if active:
+        _CHECKIN_PTZ_ACTIVE.set()
+    else:
+        _CHECKIN_PTZ_ACTIVE.clear()
+
+
+def checkin_ptz_active() -> bool:
+    return _CHECKIN_PTZ_ACTIVE.is_set()
 
 
 def set_assistant_running(running: bool) -> None:

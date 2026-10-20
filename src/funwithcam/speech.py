@@ -15,8 +15,10 @@ from zoneinfo import ZoneInfo
 
 from .audio import AudioOutput
 from .checkin import CheckinRecorder
+from .checkin_ptz import CheckinPtzController
 from .config import AppConfig, SpeechConfig, load_config
 from .precheck import PrecheckCoordinator, PrecheckResult
+from .runtime_state import set_checkin_ptz_active
 from .storage.activity_repository import ActivityRepository
 from .storage.database import Database
 from .storage.family_repository import FamilyRepository
@@ -235,6 +237,11 @@ class SpeechCommandHandler:
             config.video.stream_url,
             database_path.resolve().parent / "checkins",
             self._checkins,
+        )
+        self._checkin_ptz = CheckinPtzController(
+            config.checkin_ptz,
+            config.audio.camera_api_url,
+            config.audio.camera_stream,
         )
         self._input_source = (
             "camera_audio"
@@ -703,6 +710,20 @@ class SpeechCommandHandler:
                 )
                 return True
             if _contains_any(normalized, ("开始打卡", "准备好了")):
+                ptz_result = self._checkin_ptz.begin()
+                if ptz_result.success and ptz_result.details == "tilted":
+                    set_checkin_ptz_active(True)
+                elif not ptz_result.success:
+                    self._activities.record(
+                        now,
+                        "study",
+                        "checkin_ptz_begin_failed",
+                        "camera",
+                        "warning",
+                        "打卡低头未生效",
+                        ptz_result.details,
+                        {"details": ptz_result.details},
+                    )
                 try:
                     self._recorder.start(
                         context["recording_id"],
@@ -710,6 +731,7 @@ class SpeechCommandHandler:
                         now,
                     )
                 except (RuntimeError, ValueError) as exc:
+                    set_checkin_ptz_active(False)
                     self._dialogues.complete(dialogue["id"], "cancelled", now)
                     self._record_checkin_activity(
                         now,
@@ -754,6 +776,8 @@ class SpeechCommandHandler:
         elif dialogue["state"] == "recording":
             if _contains_any(normalized, ("取消打卡",)):
                 self._recorder.stop(now, save=False)
+                set_checkin_ptz_active(False)
+                self._checkin_ptz.restore()
                 self._dialogues.complete(dialogue["id"], "cancelled", now)
                 self._record_checkin_activity(
                     now,
@@ -773,6 +797,8 @@ class SpeechCommandHandler:
                 try:
                     duration = self._recorder.stop(now, save=True)
                 except (RuntimeError, ValueError) as exc:
+                    set_checkin_ptz_active(False)
+                    self._checkin_ptz.restore()
                     self._dialogues.complete(dialogue["id"], "cancelled", now)
                     self._record_checkin_activity(
                         now,
@@ -805,6 +831,10 @@ class SpeechCommandHandler:
                 message = "打卡视频已保存，共录制{}秒。".format(
                     max(1, round(duration))
                 )
+                ptz_result = self._checkin_ptz.restore()
+                set_checkin_ptz_active(False)
+                if not ptz_result.success:
+                    message = "{}{}".format(message, ptz_result.message)
                 self._speak_and_record(
                     message,
                     START_CHECKIN,
@@ -937,6 +967,8 @@ class SpeechCommandHandler:
         try:
             duration = self._recorder.stop(now, save=True)
         except (RuntimeError, ValueError) as exc:
+            set_checkin_ptz_active(False)
+            self._checkin_ptz.restore()
             self._dialogues.complete(dialogue["id"], "cancelled", now)
             self._record_checkin_activity(
                 now,
@@ -966,8 +998,13 @@ class SpeechCommandHandler:
             "录制时长 {:.1f} 秒".format(duration),
             context,
         )
+        message = "视频已达到最长录制时长，打卡已经自动保存。"
+        ptz_result = self._checkin_ptz.restore()
+        set_checkin_ptz_active(False)
+        if not ptz_result.success:
+            message = "{}{}".format(message, ptz_result.message)
         self._speak_and_record(
-            "视频已达到最长录制时长，打卡已经自动保存。",
+            message,
             START_CHECKIN,
             "success",
         )

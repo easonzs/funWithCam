@@ -13,6 +13,7 @@ from .identity.vision import FaceDetector, FaceRecognizer
 from .presence import PresenceMonitor
 from .runtime_state import (
     calibration_active,
+    checkin_ptz_active,
     set_assistant_paused,
     set_assistant_running,
 )
@@ -164,6 +165,10 @@ def run_assistant(
 
             status = reminders.get_daily_status(now.date().isoformat())
             if status["workflow_state"] == "STUDYING":
+                if checkin_ptz_active():
+                    # 打卡低头期间摄像头拍桌面：暂停姿态/在座观测，避免假“离席”数据。
+                    stop_event.wait(0.1)
+                    continue
                 settings = family.get_settings()
                 session = study_sessions.get_latest(now.date().isoformat())
                 if (

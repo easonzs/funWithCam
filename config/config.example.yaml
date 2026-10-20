@@ -38,6 +38,19 @@ calibration:
   # 原图和标注图只保存在本机 data 目录，不会提交到 Git。
   image_dir: data/calibrations
 
+checkin_ptz:
+  # 视频打卡时向下低头拍摄桌面，打卡结束后自动恢复到低头前的标准位置。
+  # 云台必须已在 go2rtc 拉流中才能转动，开启前先用网页 PTZ 验证可转。
+  enabled: false
+  # 低头步数：孩子说“开始打卡”后，摄像头向下转这么多步（仅动仰角，不动水平角）。
+  tilt_steps: 3
+  # 每一步之间的间隔（秒），给马达留出到位时间。
+  step_delay_seconds: 0.5
+  # 恢复误差容差：Xiaomi 云台坐标范围 1–101，误差在此范围内视为已复位。
+  restore_tolerance: 2
+  # 恢复时的微调轮数上限，超过则语音提醒家长手动检查。
+  restore_max_attempts: 3
+
 audio:
   # macbook 使用本机 say；camera 通过 go2rtc 的双向音频从摄像头播放。
   output_source: macbook
