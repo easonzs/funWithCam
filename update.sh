@@ -45,19 +45,19 @@ if ! command -v docker >/dev/null 2>&1 \
 fi
 
 git pull --ff-only
-if grep -Eq '^GO2RTC_IMAGE=(alexxit/go2rtc:1\.9\.14|ghcr\.io/easonzs/go2rtc-xiaomi-audio:1\.9\.14-fix\.[12])$' "$PROJECT_DIR/.env"; then
+if grep -Eq '^GO2RTC_IMAGE=(alexxit/go2rtc:1\.9\.14|ghcr\.io/easonzs/go2rtc-xiaomi-audio:1\.9\.14-fix\.[123])$' "$PROJECT_DIR/.env"; then
     sed -i.bak \
-        -e 's|^GO2RTC_IMAGE=alexxit/go2rtc:1\.9\.14$|GO2RTC_IMAGE=ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3|' \
-        -e 's|^GO2RTC_IMAGE=ghcr\.io/easonzs/go2rtc-xiaomi-audio:1\.9\.14-fix\.[12]$|GO2RTC_IMAGE=ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3|' \
+        -e 's|^GO2RTC_IMAGE=alexxit/go2rtc:1\.9\.14$|GO2RTC_IMAGE=ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-ptz.1|' \
+        -e 's|^GO2RTC_IMAGE=ghcr\.io/easonzs/go2rtc-xiaomi-audio:1\.9\.14-fix\.[123]$|GO2RTC_IMAGE=ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-ptz.1|' \
         "$PROJECT_DIR/.env"
     rm -f "$PROJECT_DIR/.env.bak"
-    echo "已切换到 Xiaomi 扬声器噪音修正版 go2rtc 镜像。"
+    echo "已切换到含 PTZ 云台控制的 go2rtc 镜像（含原有扬声器音频修正）。"
 fi
 
 FUNWITHCAM_IMAGE=$(env_value FUNWITHCAM_IMAGE)
 FUNWITHCAM_IMAGE=${FUNWITHCAM_IMAGE:-ghcr.io/easonzs/funwithcam:latest}
 GO2RTC_IMAGE=$(env_value GO2RTC_IMAGE)
-GO2RTC_IMAGE=${GO2RTC_IMAGE:-ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3}
+GO2RTC_IMAGE=${GO2RTC_IMAGE:-ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-ptz.1}
 WEB_PORT=$(env_value WEB_PORT)
 WEB_PORT=${WEB_PORT:-8000}
 GO2RTC_API_PORT=$(env_value GO2RTC_API_PORT)

@@ -94,7 +94,7 @@ GO2RTC_API_PORT=${GO2RTC_API_PORT:-1984}
 FUNWITHCAM_IMAGE=$(env_value FUNWITHCAM_IMAGE)
 FUNWITHCAM_IMAGE=${FUNWITHCAM_IMAGE:-ghcr.io/easonzs/funwithcam:latest}
 GO2RTC_IMAGE=$(env_value GO2RTC_IMAGE)
-GO2RTC_IMAGE=${GO2RTC_IMAGE:-ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3}
+GO2RTC_IMAGE=${GO2RTC_IMAGE:-ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-ptz.1}
 export FUNWITHCAM_IMAGE GO2RTC_IMAGE
 
 "$PROJECT_DIR/scripts/prepare-runtime.sh"

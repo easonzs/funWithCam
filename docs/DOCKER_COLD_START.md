@@ -31,7 +31,7 @@ docker save \
 | 镜像 | 地址 | 包含内容 |
 |---|---|---|
 | FunWithCam | `ghcr.io/easonzs/funwithcam:latest` | Python 3.11、应用代码、SQLite 库、OpenCV、MediaPipe、FFmpeg、espeak-ng、人脸与语音模型 |
-| go2rtc | `ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-fix.3` | go2rtc 运行程序、小米 CS2 payload 修复、`chuangmi.camera.061a01` 的 40ms Opus 适配 |
+| go2rtc | `ghcr.io/easonzs/go2rtc-xiaomi-audio:1.9.14-ptz.1` | go2rtc 运行程序、小米 CS2 payload 修复、`chuangmi.camera.061a01` 的 40ms Opus 适配、PTZ 云台控制 API |
 
 镜像从 GHCR 拉取后保存在 Docker Desktop 管理的本地镜像存储中，可通过
 `docker image ls` 查看；它们不是普通文件，不位于项目的 `runtime/` 目录。
