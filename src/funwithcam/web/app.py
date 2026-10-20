@@ -9,8 +9,14 @@ from typing import Callable, Optional
 from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+import httpx
+from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -201,6 +207,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        app.state.go2rtc_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0),
+            follow_redirects=False,
+        )
         stop_event = None
         assistant_thread = None
         speech_thread = None
@@ -237,6 +247,7 @@ def create_app(
                 speech_thread.join(timeout=5)
             prechecks.close()
             calibration_coordinator.close()
+            await app.state.go2rtc_client.aclose()
 
     app = FastAPI(
         title="FunWithCam",
@@ -249,6 +260,175 @@ def create_app(
         StaticFiles(directory=str(web_root / "static")),
         name="static",
     )
+
+    go2rtc_prefix = config.web.go2rtc_prefix.rstrip("/")
+    go2rtc_base_url = config.web.go2rtc_base_url.rstrip("/")
+
+    _GO2RTC_HOP_BY_HOP = frozenset(
+        {
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+            "host",
+        }
+    )
+
+    @app.api_route(
+        go2rtc_prefix + "/{path:path}",
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+    )
+    async def go2rtc_proxy(path: str, request: Request):
+        """把 8000 的 /{prefix}/* 转发到 go2rtc 的 1984。
+
+        播放器用相对路径找 api/ws，所以 iframe 里的 /{prefix}/stream.html
+        的 api 请求自然落在 /{prefix}/api/ws，这里原样转发到 go2rtc。
+        """
+        if config.web.go2rtc_prefix != "/":
+            _require_session(request, auth, timezone)
+        target = "{}/{}".format(go2rtc_base_url, path)
+        headers = {
+            name: value
+            for name, value in request.headers.items()
+            if name.lower() not in _GO2RTC_HOP_BY_HOP
+        }
+        body = await request.body()
+        try:
+            upstream = await app.state.go2rtc_client.request(
+                request.method,
+                target,
+                headers=headers,
+                content=body,
+                params=request.query_params,
+            )
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail="go2rtc unavailable")
+        return Response(
+            content=upstream.content,
+            status_code=upstream.status_code,
+            headers={
+                name: value
+                for name, value in upstream.headers.items()
+                if name.lower()
+                not in ("content-length", "transfer-encoding", "connection")
+            },
+        )
+
+    @app.websocket(go2rtc_prefix + "/api/ws")
+    async def go2rtc_ws_proxy(websocket: WebSocket):
+        """桥接 8000 与 go2rtc 的 WebSocket 信令（api/ws?src=...）。"""
+        await websocket.accept()
+        import websockets as ws_lib
+
+        # websockets 库需要 ws:// 协议前缀，base_url 是 http(s)://
+        upstream_scheme = (
+            "wss" if go2rtc_base_url.startswith("https://") else "ws"
+        )
+        upstream_url = upstream_scheme + "://" + go2rtc_base_url.split(
+            "://", 1
+        )[1]
+        target = upstream_url + websocket.url.path.removeprefix(
+            go2rtc_prefix
+        ) + (
+            "?" + websocket.url.query if websocket.url.query else ""
+        )
+        try:
+            async with ws_lib.connect(
+                target,
+                subprotocols=(
+                    [
+                        item.strip()
+                        for item in websocket.headers.get(
+                            "sec-websocket-protocol", ""
+                        ).split(",")
+                        if item.strip()
+                    ]
+                    or None
+                ),
+            ) as upstream:
+                async def _bridge_ws():
+                    async for message in upstream:
+                        if isinstance(message, str):
+                            await websocket.send_text(message)
+                        else:
+                            await websocket.send_bytes(message)
+
+                bridge = asyncio.create_task(_bridge_ws())
+                try:
+                    while True:
+                        message = await websocket.receive()
+                        if message["type"] == "websocket.disconnect":
+                            break
+                        data = message.get("text")
+                        if data is not None:
+                            await upstream.send(data)
+                        else:
+                            await upstream.send(message.get("bytes"))
+                finally:
+                    bridge.cancel()
+        except Exception as exc:
+            LOGGER.warning(
+                "go2rtc ws proxy error: %s: %s", type(exc).__name__, exc
+            )
+            try:
+                await websocket.close()
+            except RuntimeError:
+                pass
+
+    @app.get("/camera", response_class=HTMLResponse)
+    def camera_page(request: Request, message: Optional[str] = None, error: Optional[str] = None):
+        _, session = _require_session(request, auth, timezone)
+        return render_page(
+            request,
+            "camera.html",
+            session,
+            "camera",
+            go2rtc_url=go2rtc_prefix
+            + "/stream.html?src="
+            + quote(config.audio.camera_stream, safe=""),
+            message=message,
+            error=error,
+        )
+
+    @app.get("/camera/motor")
+    async def camera_motor_read(request: Request):
+        _, session = _require_session(request, auth, timezone)
+        try:
+            response = await app.state.go2rtc_client.get(
+                "{}/api/xiaomi/motor?src={}&read=1".format(
+                    go2rtc_base_url,
+                    quote(config.audio.camera_stream, safe=""),
+                )
+            )
+            response.raise_for_status()
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            raise HTTPException(status_code=502, detail="go2rtc motor API failed")
+        return response.json()
+
+    @app.post("/camera/motor")
+    async def camera_motor_move(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        operation = str(form.get("operation", ""))
+        if operation not in {"1", "2", "3", "4"}:
+            raise HTTPException(status_code=400, detail="invalid operation")
+        try:
+            response = await app.state.go2rtc_client.post(
+                "{}/api/xiaomi/motor?src={}&operation={}".format(
+                    go2rtc_base_url,
+                    quote(config.audio.camera_stream, safe=""),
+                    operation,
+                )
+            )
+            response.raise_for_status()
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            raise HTTPException(status_code=502, detail="go2rtc motor API failed")
+        return response.json()
 
     @app.exception_handler(_LoginRequired)
     async def login_required_handler(request: Request, exc: _LoginRequired):

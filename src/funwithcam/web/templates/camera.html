@@ -1,0 +1,142 @@
+{% extends "app_shell.html" %}
+{% block title %}摄像头 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <p class="eyebrow">实时画面与云台控制</p>
+    <h1>摄像头</h1>
+    <p class="page-description">查看实时画面、通过摄像头扬声器对讲、控制云台转向。</p>
+  </div>
+</header>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="camera-shell" id="camera-shell">
+  <div class="camera-viewport" id="camera-viewport">
+    <iframe
+      src="{{ go2rtc_url }}"
+      class="camera-frame"
+      id="camera-frame"
+      allow="microphone; autoplay; fullscreen"
+      referrerpolicy="no-referrer"
+      title="摄像头实时画面"></iframe>
+    <div class="camera-frame-overlay" id="camera-frame-overlay" hidden>
+      <p>视频流不可用，请确认 go2rtc 与摄像头已连接。</p>
+    </div>
+  </div>
+
+  <div class="camera-controls" aria-label="云台控制">
+    <div class="camera-ptz">
+      <h2>云台控制</h2>
+      <p class="field-help">点击按钮控制摄像头转向，松开即停。命令走已建立的拉流会话。</p>
+      <div class="ptz-pad" role="group" aria-label="方向">
+        <div class="ptz-row ptz-row-top">
+          <form method="post" action="/camera/motor" class="ptz-form" data-operation="3">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="operation" value="3">
+            <button class="button ptz-button" type="submit" aria-label="上">↑</button>
+          </form>
+        </div>
+        <div class="ptz-row ptz-row-mid">
+          <form method="post" action="/camera/motor" class="ptz-form" data-operation="1">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="operation" value="1">
+            <button class="button ptz-button" type="submit" aria-label="左">←</button>
+          </form>
+          <div class="ptz-center">PTZ</div>
+          <form method="post" action="/camera/motor" class="ptz-form" data-operation="2">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="operation" value="2">
+            <button class="button ptz-button" type="submit" aria-label="右">→</button>
+          </form>
+        </div>
+        <div class="ptz-row ptz-row-bottom">
+          <form method="post" action="/camera/motor" class="ptz-form" data-operation="4">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="operation" value="4">
+            <button class="button ptz-button" type="submit" aria-label="下">↓</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="camera-status">
+      <h2>当前位置</h2>
+      <dl class="detail-list" id="camera-position">
+        <div>
+          <dt>水平角度</dt>
+          <dd id="position-angle">—</dd>
+        </div>
+        <div>
+          <dt>俯仰角度</dt>
+          <dd id="position-elevation">—</dd>
+        </div>
+      </dl>
+      <p class="field-help" id="position-note">进入页面后自动读取，移动后刷新。</p>
+    </div>
+
+    <div class="camera-tips">
+      <h2>使用提示</h2>
+      <ul class="plain-checklist">
+        <li><strong>对讲</strong>：画面右下角按住麦克风说话，声音从摄像头扬声器播出；松开即停。</li>
+        <li><strong>半双工</strong>：对讲时会暂停语音识别，松开后自动恢复。</li>
+        <li><strong>全屏</strong>：双击画面即可放大。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<script>
+(function () {
+  const frame = document.getElementById('camera-frame');
+  const overlay = document.getElementById('camera-frame-overlay');
+  const angleEl = document.getElementById('position-angle');
+  const elevationEl = document.getElementById('position-elevation');
+  const noteEl = document.getElementById('position-note');
+
+  async function readPosition() {
+    try {
+      const r = await fetch('/camera/motor', {method: 'GET'});
+      if (!r.ok) throw new Error('motor read failed');
+      const data = await r.json();
+      angleEl.textContent = (data.angle != null) ? data.angle + '°' : '—';
+      elevationEl.textContent = (data.elevation != null) ? data.elevation + '°' : '—';
+      noteEl.textContent = data.ret !== 0 ? '读取失败，请重试。' : '已更新。';
+    } catch (e) {
+      noteEl.textContent = '无法读取位置，请确认 go2rtc 连接。';
+    }
+  }
+
+  // 进入页面先读一次
+  readPosition();
+
+  // 云台按钮：提交成功后刷新位置
+  document.querySelectorAll('.ptz-form').forEach(function (form) {
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      try {
+        const fd = new FormData(form);
+        const r = await fetch(form.action, {method: 'POST', body: fd});
+        const data = await r.json();
+        if (r.ok && data.ok) {
+          noteEl.textContent = '已移动，刷新位置…';
+          // 电机移动需要一点时间，稍后读取
+          setTimeout(readPosition, 500);
+        } else {
+          noteEl.textContent = '移动失败：' + (data.detail || '未知错误');
+        }
+      } catch (e) {
+        noteEl.textContent = '移动失败，请重试。';
+      }
+    });
+  });
+
+  // 检测 iframe 加载失败：mousedown 后仍无画面则显示占位
+  frame.addEventListener('load', function () {
+    // iframe load 不代表视频可用，仅隐藏占位
+    overlay.hidden = true;
+  });
+})();
+</script>
+{% endblock %}

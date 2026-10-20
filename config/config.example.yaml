@@ -81,6 +81,9 @@ web:
   host: 0.0.0.0
   port: 8000
   session_hours: 24
+  # 摄像头控制页通过反向代理嵌入 go2rtc 播放页（视频 + 对讲），统一从 8000 访问。
+  go2rtc_base_url: http://127.0.0.1:1984
+  go2rtc_prefix: /_go2rtc
 
 logging:
   level: INFO

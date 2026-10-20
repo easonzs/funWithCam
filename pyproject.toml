@@ -17,6 +17,8 @@ dependencies = [
   "python-multipart>=0.0.9,<1",
   "PyYAML>=6,<7",
   "uvicorn>=0.30,<1",
+  # go2rtc 播放器通过 WebSocket 信令；uvicorn 也依赖它处理 WS 协议。
+  "websockets>=13,<14",
 ]
 
 [project.optional-dependencies]

@@ -94,6 +94,10 @@ class WebConfig:
     host: str
     port: int
     session_hours: int
+    # 反向代理 go2rtc 的入口：8000 页面用 iframe 嵌入
+    # /{go2rtc_prefix}/stream.html?src={camera_stream}，由 create_app 统一转发到 go2rtc。
+    go2rtc_base_url: str
+    go2rtc_prefix: str
 
 
 @dataclass(frozen=True)
@@ -469,6 +473,10 @@ def load_config(path: Path) -> AppConfig:
                 _require(web, "session_hours"),
                 "web.session_hours",
             ),
+            go2rtc_base_url=str(
+                web.get("go2rtc_base_url", "http://127.0.0.1:1984")
+            ),
+            go2rtc_prefix=str(web.get("go2rtc_prefix", "/_go2rtc")),
         ),
         log_level=str(logging_config.get("level", "INFO")).upper(),
     )
