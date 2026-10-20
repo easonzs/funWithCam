@@ -1,0 +1,43 @@
+<article class="agenda-row {% if item.status == 'done' %}is-done{% endif %}">
+  <div class="agenda-main">
+    <div class="agenda-meta">
+      <span class="type-tag type-{{ item.item_type }}">
+        {% if item.item_type == 'homework' %}作业
+        {% elif item.item_type == 'course' %}课程
+        {% else %}临时{% endif %}
+      </span>
+      {% if item.scheduled_time %}<time>{{ item.scheduled_time }}</time>{% endif %}
+      {% if item.estimated_minutes %}<span>预计 {{ item.estimated_minutes }} 分钟</span>{% endif %}
+      {% if item.task_type_label %}<span>{{ item.task_type_label }}</span>{% endif %}
+      {% if item.source == 'template' %}<span class="tag">模板自动</span>{% endif %}
+      {% if item.completion_evidence == 'child_confirmed' %}<span>孩子确认完成</span>
+      {% elif item.completion_evidence == 'video' %}<span>已有打卡视频</span>
+      {% elif item.completion_evidence == 'later' %}<span>稍后完成</span>
+      {% elif item.completion_evidence == 'skipped' %}<span>已跳过</span>{% endif %}
+    </div>
+    <h3>{{ item.title }}</h3>
+    {% if item.notes %}<p>{{ item.notes }}</p>{% endif %}
+  </div>
+  <div class="row-actions">
+    {% if item.task_type_label %}
+      <form method="post" action="/today/items/{{ item.id }}/finish-check">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="enabled" value="{% if item.include_in_finish_check %}0{% else %}1{% endif %}">
+        <button class="finish-check-toggle {% if item.include_in_finish_check %}is-on{% else %}is-off{% endif %}" type="submit"
+          aria-pressed="{{ 'true' if item.include_in_finish_check else 'false' }}">
+          <span class="finish-check-dot" aria-hidden="true"></span>
+          {% if item.include_in_finish_check %}结束时询问{% else %}结束时不问{% endif %}
+        </button>
+      </form>
+    {% endif %}
+    <form method="post" action="/today/items/{{ item.id }}/status">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="status" value="{% if item.status == 'done' %}pending{% else %}done{% endif %}">
+      <button class="button button-small" type="submit">{% if item.status == 'done' %}恢复{% else %}完成{% endif %}</button>
+    </form>
+    <form method="post" action="/today/items/{{ item.id }}/delete" onsubmit="return confirm('删除这项安排？')">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button button-small button-danger" type="submit">删除</button>
+    </form>
+  </div>
+</article>

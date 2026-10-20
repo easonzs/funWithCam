@@ -3,17 +3,18 @@ import logging
 import subprocess
 import threading
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
+    JSONResponse,
     RedirectResponse,
     Response,
 )
@@ -54,6 +55,7 @@ from funwithcam.storage.calibration_repository import CalibrationRepository
 from funwithcam.storage.database import Database
 from funwithcam.storage.family_repository import FamilyRepository
 from funwithcam.storage.interaction_repository import (
+    ScheduleRepository,
     SpeechIntentRepository,
     TaskTypeRepository,
 )
@@ -159,6 +161,7 @@ def create_app(
     speech_intents = SpeechIntentRepository(database)
     speech_templates = SpeechTemplateRepository(database)
     task_types = TaskTypeRepository(database)
+    schedule = ScheduleRepository(database)
     reminders = ReminderRepository(database)
     study_sessions = StudySessionRepository(database)
     calibrations = CalibrationRepository(database)
@@ -585,13 +588,76 @@ def create_app(
     def schedule_page(
         request: Request,
         tab: str = "today",
+        date_str: Optional[str] = Query(None, alias="date"),
         message: Optional[str] = None,
         error: Optional[str] = None,
     ):
         _, session = _require_session(request, auth, timezone)
-        if tab not in ("today", "courses"):
+        if tab not in ("today", "courses", "temporary"):
             tab = "today"
         today = datetime.now(timezone).date()
+        try:
+            target = (
+                date.fromisoformat(date_str) if date_str else today
+            )
+        except ValueError:
+            return _redirect("/schedule", error="日期格式不正确")
+        all_task_types = task_types.list_all()
+        date_sets = {
+            item["task_key"]: set(schedule.list_dates(item["task_key"]))
+            for item in all_task_types
+        }
+        # 月历：从本月 1 号往前填充到周一，从月末往后填到周日。
+        month_start = target.replace(day=1)
+        grid_start = month_start - timedelta(days=month_start.weekday())
+        days_in_month = (
+            date(target.year, target.month + 1, 1) - timedelta(days=1)
+            if target.month < 12
+            else date(target.year + 1, 1, 1) - timedelta(days=1)
+        ).day
+        month_days = []
+        for offset in range(42):
+            day_date = grid_start + timedelta(days=offset)
+            day_key = day_date.isoformat()
+            hits = sum(
+                1 for item in all_task_types if day_key in date_sets[item["task_key"]]
+            )
+            month_days.append(
+                {
+                    "date": day_date,
+                    "name": WEEKDAY_NAMES[day_date.weekday()],
+                    "day": day_date.day,
+                    "in_month": day_date.month == target.month,
+                    "hits": hits,
+                }
+            )
+        # 周视图：当前所处的周一为一周起点，本周 7 天 + 上一周/下一周起点。
+        week_start = target - timedelta(days=target.weekday())
+        week_prev = week_start - timedelta(days=7)
+        week_next = week_start + timedelta(days=7)
+        week_days = []
+        for offset in range(7):
+            day_date = week_start + timedelta(days=offset)
+            day_key = day_date.isoformat()
+            hits = sum(
+                1 for item in all_task_types if day_key in date_sets[item["task_key"]]
+            )
+            week_days.append(
+                {
+                    "date": day_date,
+                    "name": WEEKDAY_NAMES[day_date.weekday()],
+                    "day": day_date.day,
+                    "hits": hits,
+                }
+            )
+        template_groups = {"homework": [], "checkin": [], "other": []}
+        for item in all_task_types:
+            if item["category"] == "school_homework":
+                template_groups["homework"].append(item)
+            elif item["category"] == "checkin":
+                template_groups["checkin"].append(item)
+            else:
+                template_groups["other"].append(item)
         return render_page(
             request,
             "schedule.html",
@@ -599,9 +665,24 @@ def create_app(
             "schedule",
             tab=tab,
             today=today,
-            weekday=WEEKDAY_NAMES[today.weekday()],
-            items=family.list_agenda(today),
+            target=target,
+            weekday=WEEKDAY_NAMES[target.weekday()],
+            days_in_month=days_in_month,
+            timedelta=timedelta,
+            items=family.list_agenda(target),
             weekly_courses=family.list_weekly_courses(),
+            temporary_items=family.list_temporary_items(),
+            task_types=all_task_types,
+            template_groups=template_groups,
+            schedule_dates={
+                item["task_key"]: sorted(date_sets[item["task_key"]])
+                for item in all_task_types
+            },
+            week_days=week_days,
+            week_start=week_start,
+            week_prev=week_prev,
+            week_next=week_next,
+            month_days=month_days,
             message=message,
             error=error,
         )
@@ -633,6 +714,63 @@ def create_app(
             session,
             "schedule",
             error=error,
+        )
+
+    @app.get("/schedule/temporary/new", response_class=HTMLResponse)
+    def new_temporary_page(
+        request: Request,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        today = datetime.now(timezone).date()
+        return render_page(
+            request,
+            "temporary_form.html",
+            session,
+            "schedule",
+            today=today,
+            error=error,
+        )
+
+    @app.post("/schedule/temporary")
+    async def add_temporary_item(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        try:
+            target_date = date.fromisoformat(str(form.get("target_date", "")))
+        except ValueError:
+            return _redirect("/schedule/temporary/new", error="请选择生效日期")
+        try:
+            family.add_agenda(
+                target_date,
+                "temporary",
+                str(form.get("title", "")),
+                None,
+                _form_optional(form.get("scheduled_time")),
+                _optional_int(form.get("estimated_minutes")),
+                _int_or_zero(form.get("preparation_minutes")),
+                str(form.get("notes", "")),
+                datetime.now(timezone),
+                None,
+                None,
+            )
+        except ValueError as exc:
+            return _redirect("/schedule/temporary/new", error=str(exc))
+        return _redirect(
+            "/schedule?tab=temporary",
+            message="临时安排已添加",
+        )
+
+    @app.post("/schedule/temporary/{item_id}/delete")
+    async def delete_temporary_item(item_id: int, request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        family.delete_agenda(item_id)
+        return _redirect(
+            "/schedule?tab=temporary",
+            message="临时安排已删除",
         )
 
     @app.get("/today/settings", response_class=HTMLResponse)
@@ -1599,20 +1737,37 @@ def create_app(
 
     @app.post("/today/items/{item_id}/finish-check")
     async def set_item_finish_check(item_id: int, request: Request):
-        token, _ = _require_session(request, auth, timezone)
+        token, session = _require_session(request, auth, timezone)
         form = await request.form()
         _require_csrf(token, str(form.get("csrf", "")))
         try:
             enabled = str(form.get("enabled", ""))
             if enabled not in ("0", "1"):
-                raise ValueError("invalid finish check setting")
+                raise ValueError("结束检查设置无效")
             family.set_finish_check_enabled(
                 item_id,
                 enabled == "1",
                 datetime.now(timezone),
             )
-        except ValueError as exc:
-            return _redirect("/schedule", error=str(exc))
+        except ValueError:
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return JSONResponse(
+                    {"error": "这条安排已被移除，请刷新页面后再试。"},
+                    status_code=400,
+                )
+            return _redirect("/schedule", error="这条安排已被移除，请刷新页面后再试。")
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            item = family.get_agenda_item(item_id)
+            if item is None:
+                return JSONResponse(
+                    {"error": "这条安排已被移除，请刷新页面后再试。"},
+                    status_code=400,
+                )
+            row_template = templates.get_template("_agenda_row.html")
+            row_html = row_template.render(
+                item=item, csrf=session.csrf_token,
+            )
+            return JSONResponse({"row_html": row_html})
         return _redirect("/schedule", message="结束检查设置已更新")
 
     @app.post("/today/items/{item_id}/delete")
@@ -1622,6 +1777,135 @@ def create_app(
         _require_csrf(token, str(form.get("csrf", "")))
         family.delete_agenda(item_id)
         return _redirect("/schedule", message="安排已删除")
+
+    @app.post("/schedule/template/toggle")
+    async def schedule_template_toggle(request: Request):
+        token, session = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        task_type_key = str(form.get("task_type_key", ""))
+        target_date = str(form.get("target_date", ""))
+        active = str(form.get("active", "")) == "1"
+        try:
+            if active:
+                schedule.add_date(
+                    task_type_key,
+                    target_date,
+                    datetime.now(timezone),
+                )
+            else:
+                schedule.remove_date(task_type_key, target_date)
+        except ValueError as exc:
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            return _redirect("/schedule", error=str(exc))
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            # 无刷新切换：返回新状态 + 重建后的整行 + 更新后的完整安排。
+            try:
+                target_date_parsed = date.fromisoformat(target_date)
+            except ValueError:
+                target_date_parsed = today
+            task_type = task_types.get(task_type_key)
+            schedule_dates_after = set(schedule.list_dates(task_type_key))
+            active_after = target_date in schedule_dates_after
+            row_template = templates.get_template("_template_toggle_row.html")
+            row_html = row_template.render(
+                t=task_type,
+                target=target_date_parsed,
+                schedule_dates={task_type_key: sorted(schedule_dates_after)},
+                csrf=session.csrf_token,
+            )
+            agenda_items = family.list_agenda(target_date_parsed)
+            agenda_template = templates.get_template("_agenda_row.html")
+            agenda_html = "".join(
+                agenda_template.render(
+                    item=item, csrf=session.csrf_token,
+                )
+                for item in agenda_items
+            )
+            return JSONResponse(
+                {
+                    "active": active_after,
+                    "row_html": row_html,
+                    "agenda_html": agenda_html,
+                }
+            )
+        return _redirect(
+            "/schedule?date={}".format(target_date),
+            message="已{}{}的打卡/作业".format(
+                "开启" if active else "关闭", target_date
+            ),
+        )
+
+    @app.get("/schedule/override", response_class=HTMLResponse)
+    def schedule_override_page(
+        request: Request,
+        task_type_key: str,
+        date: str,
+        error: Optional[str] = None,
+    ):
+        _, session = _require_session(request, auth, timezone)
+        task_type = task_types.get(task_type_key)
+        if task_type is None:
+            return _redirect("/schedule", error="模板不存在")
+        override = None
+        for row in schedule.list_overrides(task_type_key):
+            if row["target_date"] == date:
+                override = row
+        return render_page(
+            request,
+            "schedule_override.html",
+            session,
+            "schedule",
+            task_type=task_type,
+            target_date=date,
+            override=override,
+            error=error,
+        )
+
+    @app.post("/schedule/override")
+    async def schedule_override_save(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        task_type_key = str(form.get("task_type_key", ""))
+        target_date = str(form.get("target_date", ""))
+        disabled = str(form.get("disabled", "")) == "on"
+        override_title = _form_optional(form.get("override_title"))
+        notes = str(form.get("notes", ""))
+        try:
+            schedule.set_override(
+                task_type_key,
+                target_date,
+                disabled=disabled,
+                override_title=override_title,
+                notes=notes,
+                now=datetime.now(timezone),
+            )
+        except ValueError as exc:
+            return _redirect(
+                "/schedule/override?task_type_key={}&date={}".format(
+                    task_type_key, target_date
+                ),
+                error=str(exc),
+            )
+        return _redirect(
+            "/schedule?date={}".format(target_date),
+            message="当天内容已保存",
+        )
+
+    @app.post("/schedule/override/delete")
+    async def schedule_override_delete(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        task_type_key = str(form.get("task_type_key", ""))
+        target_date = str(form.get("target_date", ""))
+        schedule.delete_override(task_type_key, target_date)
+        return _redirect(
+            "/schedule?date={}".format(target_date),
+            message="已清除当天的覆盖设置",
+        )
 
     @app.post("/today/preferences")
     async def save_today_preferences(request: Request):

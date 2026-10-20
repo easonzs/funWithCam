@@ -40,6 +40,15 @@ class PrecheckConfig:
 
 
 @dataclass(frozen=True)
+class CheckinPtzConfig:
+    enabled: bool
+    tilt_steps: int
+    step_delay_seconds: float
+    restore_tolerance: int
+    restore_max_attempts: int
+
+
+@dataclass(frozen=True)
 class CalibrationConfig:
     duration_seconds: float
     timeout_seconds: float
@@ -112,6 +121,7 @@ class AppConfig:
     audio: AudioConfig
     speech: SpeechConfig
     identity: IdentityConfig
+    checkin_ptz: CheckinPtzConfig
     web: WebConfig
     log_level: str
 
@@ -210,6 +220,19 @@ def load_config(path: Path) -> AppConfig:
             },
         ),
         "calibration",
+    )
+    checkin_ptz = _as_mapping(
+        raw.get(
+            "checkin_ptz",
+            {
+                "enabled": False,
+                "tilt_steps": 3,
+                "step_delay_seconds": 0.5,
+                "restore_tolerance": 2,
+                "restore_max_attempts": 3,
+            },
+        ),
+        "checkin_ptz",
     )
     audio = _as_mapping(_require(raw, "audio"), "audio")
     speech = _as_mapping(
@@ -464,6 +487,27 @@ def load_config(path: Path) -> AppConfig:
             debug_rejected_limit=_positive_int(
                 _require(identity, "debug_rejected_limit"),
                 "identity.debug_rejected_limit",
+            ),
+        ),
+        checkin_ptz=CheckinPtzConfig(
+            enabled=_boolean(
+                _require(checkin_ptz, "enabled"), "checkin_ptz.enabled"
+            ),
+            tilt_steps=_positive_int(
+                _require(checkin_ptz, "tilt_steps"),
+                "checkin_ptz.tilt_steps",
+            ),
+            step_delay_seconds=_positive(
+                _require(checkin_ptz, "step_delay_seconds"),
+                "checkin_ptz.step_delay_seconds",
+            ),
+            restore_tolerance=_non_negative(
+                _require(checkin_ptz, "restore_tolerance"),
+                "checkin_ptz.restore_tolerance",
+            ),
+            restore_max_attempts=_positive_int(
+                _require(checkin_ptz, "restore_max_attempts"),
+                "checkin_ptz.restore_max_attempts",
             ),
         ),
         web=WebConfig(

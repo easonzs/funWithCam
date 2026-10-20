@@ -96,6 +96,54 @@ class ReminderPlanTest(unittest.TestCase):
         self.assertIn("数学练习册", message)
         self.assertIn("18点10分再提醒你", message)
 
+    def test_briefing_speaks_temporary_time_and_keeps_no_time_temporary(self):
+        target_date = date(2026, 10, 12)
+        plan = build_reminder_plan(
+            target_date,
+            TIMEZONE,
+            {
+                "day_type": "school_day",
+                "second_reminder_mode": "default",
+                "second_reminder_time": None,
+                "homework_reminders_enabled": 1,
+            },
+            SETTINGS,
+        )
+        message = build_briefing_message(
+            [
+                {
+                    "item_type": "temporary",
+                    "title": "口腔医院复诊",
+                    "status": "pending",
+                    "scheduled_time": "08:30",
+                    "preparation_minutes": 0,
+                },
+                {
+                    "item_type": "temporary",
+                    "title": "给绿萝浇水",
+                    "status": "pending",
+                    "scheduled_time": None,
+                    "preparation_minutes": 0,
+                },
+                {
+                    "item_type": "homework",
+                    "title": "语文作业",
+                    "status": "pending",
+                    "scheduled_time": None,
+                    "preparation_minutes": 0,
+                },
+            ],
+            [],
+            plan,
+            datetime(2026, 10, 12, 17, 0, tzinfo=TIMEZONE),
+            "小明",
+        )
+
+        self.assertIn("8点30分有口腔医院复诊", message)
+        self.assertIn("语文作业", message)
+        # 不带时间的临时安排仍归入"另外还有"
+        self.assertIn("另外还有给绿萝浇水", message)
+
     def test_second_message_does_not_claim_voice_input_is_active(self):
         message = build_second_reminder_message(
             [

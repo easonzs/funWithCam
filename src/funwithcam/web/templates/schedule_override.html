@@ -1,0 +1,54 @@
+{% extends "app_shell.html" %}
+{% block title %}当天内容 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="form-page-heading">
+  <a class="back-link" href="/schedule?date={{ target_date }}">← 返回日程</a>
+  <h1>{{ task_type.label }} · {{ target_date }}</h1>
+  <p>为这一天的打卡/作业单独设置标题、备注或停用，不影响其它日期。</p>
+</header>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<form method="post" action="/schedule/override" class="form-panel form-grid">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="task_type_key" value="{{ task_type.task_key }}">
+  <input type="hidden" name="target_date" value="{{ target_date }}">
+
+  <label class="check-row span-2">
+    <input type="checkbox" name="disabled" {% if override and override.disabled %}checked{% endif %}>
+    <span>
+      <strong>这一天停用</strong>
+      <small>开启后 {{ target_date }} 不生成该打卡/作业。</small>
+    </span>
+  </label>
+
+  <label class="span-2">
+    <span>当天标题（可选）</span>
+    <input name="override_title" value="{{ override.override_title if override else '' }}" placeholder="默认使用「{{ task_type.label }}」">
+  </label>
+
+  <label class="span-2">
+    <span>备注（可选）</span>
+    <textarea name="notes" rows="3">{{ override.notes if override else '' }}</textarea>
+    <small class="field-help">会显示在孩子当天的安排里。</small>
+  </label>
+
+  <div class="form-actions span-2">
+    <a class="button" href="/schedule?date={{ target_date }}">取消</a>
+    <button class="button button-primary" type="submit">保存</button>
+  </div>
+</form>
+
+{% if override %}
+  <form method="post" action="/schedule/override/delete" class="form-panel form-grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="task_type_key" value="{{ task_type.task_key }}">
+    <input type="hidden" name="target_date" value="{{ target_date }}">
+    <div class="span-2">
+      <p class="page-description">想恢复默认标题、清空备注并重新启用这一天？</p>
+      <button class="button button-danger" type="submit" onclick="return confirm('清除这一天的覆盖设置？')">清除当天覆盖</button>
+    </div>
+  </form>
+{% endif %}
+{% endblock %}

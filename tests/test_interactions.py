@@ -6,6 +6,10 @@ from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from funwithcam.config import load_config
+from funwithcam.runtime_state import (
+    checkin_ptz_active,
+    set_checkin_ptz_active,
+)
 from funwithcam.speech import (
     FINISH_CHECKIN,
     START,
@@ -281,7 +285,7 @@ class SpeechInteractionTest(unittest.TestCase):
                 0,
                 "",
                 now,
-                "school_homework",
+                "math_homework",
                 False,
             )
 
@@ -520,6 +524,185 @@ class SpeechInteractionTest(unittest.TestCase):
             self.assertIsNone(
                 dialogues.get_active(now.date().isoformat())
             )
+
+    def test_checkin_ptz_tilts_on_start_and_restores_on_save(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, database_path, _, _, handler = self._handler(directory)
+            database = Database(database_path)
+            family = FamilyRepository(database)
+            dialogues = DialogueRepository(database)
+            now = datetime.now(ZoneInfo(config.timezone))
+            handler._recorder = MagicMock()
+            handler._recorder.stop.return_value = 8.0
+            ptz = MagicMock()
+            handler._checkin_ptz = ptz
+
+            item_id = family.add_agenda(
+                now.date(),
+                "homework",
+                "英语单词打卡",
+                "英语",
+                None,
+                10,
+                0,
+                "",
+                now,
+                "english_words",
+            )
+            item = next(
+                item
+                for item in family.list_agenda(now.date())
+                if item["id"] == item_id
+            )
+            handler._prepare_checkin(item, now)
+            self.assertTrue(handler.handle("开始打卡"))
+            self.assertTrue(handler.handle("打卡结束"))
+
+            ptz.begin.assert_called_once()
+            ptz.restore.assert_called_once()
+            saved_item = next(
+                item
+                for item in family.list_agenda(now.date())
+                if item["id"] == item_id
+            )
+            self.assertEqual("video", saved_item["completion_evidence"])
+            self.assertIsNone(
+                dialogues.get_active(now.date().isoformat())
+            )
+            self.assertFalse(checkin_ptz_active())
+
+    def test_checkin_ptz_restores_on_cancel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, database_path, _, _, handler = self._handler(directory)
+            database = Database(database_path)
+            family = FamilyRepository(database)
+            now = datetime.now(ZoneInfo(config.timezone))
+            handler._recorder = MagicMock()
+            ptz = MagicMock()
+            handler._checkin_ptz = ptz
+
+            item_id = family.add_agenda(
+                now.date(),
+                "homework",
+                "英语单词打卡",
+                "英语",
+                None,
+                10,
+                0,
+                "",
+                now,
+                "english_words",
+            )
+            item = next(
+                item
+                for item in family.list_agenda(now.date())
+                if item["id"] == item_id
+            )
+            handler._prepare_checkin(item, now)
+            self.assertTrue(handler.handle("开始打卡"))
+            self.assertTrue(handler.handle("取消打卡"))
+
+            ptz.begin.assert_called_once()
+            ptz.restore.assert_called_once()
+
+    def test_checkin_ptz_restores_on_overdue_auto_save(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, database_path, _, _, handler = self._handler(directory)
+            database = Database(database_path)
+            family = FamilyRepository(database)
+            dialogues = DialogueRepository(database)
+            now = datetime.now(ZoneInfo(config.timezone))
+            handler._recorder = MagicMock()
+            handler._recorder.stop.return_value = 6.2
+            ptz = MagicMock()
+            handler._checkin_ptz = ptz
+
+            item_id = family.add_agenda(
+                now.date(),
+                "homework",
+                "英语单词打卡",
+                "英语",
+                None,
+                10,
+                0,
+                "",
+                now,
+                "english_words",
+            )
+            item = next(
+                item
+                for item in family.list_agenda(now.date())
+                if item["id"] == item_id
+            )
+            handler._prepare_checkin(item, now)
+            dialogue = dialogues.get_active(now.date().isoformat())
+            context = dialogue["context"]
+            context["started_at"] = (
+                now - timedelta(seconds=6)
+            ).isoformat()
+            context["max_recording_seconds"] = 5
+            dialogues.update(
+                dialogue["id"],
+                "recording",
+                context,
+                "录制中",
+                ["打卡结束", "取消打卡"],
+                now,
+                None,
+            )
+
+            handler._finish_overdue_checkin(now)
+
+            ptz.restore.assert_called_once()
+
+    def test_checkin_ptz_begin_failure_degrades_gracefully(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, database_path, _, _, handler = self._handler(directory)
+            database = Database(database_path)
+            family = FamilyRepository(database)
+            dialogues = DialogueRepository(database)
+            now = datetime.now(ZoneInfo(config.timezone))
+            handler._recorder = MagicMock()
+            handler._recorder.stop.return_value = 8.0
+            ptz = MagicMock()
+            ptz.begin.return_value = (
+                type(
+                    "Result",
+                    (),
+                    {
+                        "success": False,
+                        "details": "unavailable",
+                        "message": "",
+                    },
+                )()
+            )
+            handler._checkin_ptz = ptz
+
+            item_id = family.add_agenda(
+                now.date(),
+                "homework",
+                "英语单词打卡",
+                "英语",
+                None,
+                10,
+                0,
+                "",
+                now,
+                "english_words",
+            )
+            item = next(
+                item
+                for item in family.list_agenda(now.date())
+                if item["id"] == item_id
+            )
+            handler._prepare_checkin(item, now)
+            self.assertTrue(handler.handle("开始打卡"))
+            self.assertTrue(handler.handle("打卡结束"))
+
+            # 低头失败不阻碍打卡录制与保存。
+            handler._recorder.start.assert_called_once()
+            handler._recorder.stop.assert_called_once()
+            ptz.restore.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -136,8 +136,8 @@ class FamilyRepositoryTest(unittest.TestCase):
             inherited = repository.list_agenda(today)[0]
 
             task_types.save(
-                "school_homework",
-                "学校作业",
+                "other_homework",
+                "其他作业",
                 "school_homework",
                 "verbal",
                 "“{title}”完成了吗？",

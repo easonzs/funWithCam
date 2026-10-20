@@ -212,6 +212,13 @@ class TaskTypeRepository:
         with self._database.connection() as connection:
             return [dict(row) for row in connection.execute(query).fetchall()]
 
+    def get(self, task_key: str) -> Optional[dict]:
+        with self._database.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM task_types WHERE task_key = ?", (task_key,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
     def save(
         self,
         task_key: str,
@@ -274,6 +281,181 @@ class TaskTypeRepository:
                 ),
             )
             connection.commit()
+
+
+class ScheduleRepository:
+    """模板 × 日期的生效集合与例外/覆盖。
+
+    「任意日期集合打勾」= template_schedule_dates 里该模板的 target_date 集合；
+    「某天不生效 / 当天补充内容」= template_schedule_overrides。
+    """
+
+    def __init__(self, database: Database):
+        self._database = database
+
+    def list_dates(self, task_type_key: str) -> list[str]:
+        with self._database.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT target_date FROM template_schedule_dates
+                WHERE task_type_key = ?
+                ORDER BY target_date
+                """,
+                (task_type_key,),
+            ).fetchall()
+        return [row["target_date"] for row in rows]
+
+    def set_dates(
+        self,
+        task_type_key: str,
+        dates: list[str],
+        now: datetime,
+    ) -> None:
+        timestamp = now.isoformat()
+        with self._database.connection() as connection:
+            connection.execute(
+                "DELETE FROM template_schedule_dates WHERE task_type_key = ?",
+                (task_type_key,),
+            )
+            for target_date in sorted(set(dates)):
+                connection.execute(
+                    """
+                    INSERT INTO template_schedule_dates (
+                        task_type_key, target_date, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (task_type_key, target_date, timestamp, timestamp),
+                )
+            connection.commit()
+
+    def add_date(self, task_type_key: str, target_date: str, now: datetime) -> None:
+        timestamp = now.isoformat()
+        with self._database.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO template_schedule_dates (
+                    task_type_key, target_date, created_at, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(task_type_key, target_date) DO UPDATE SET
+                    updated_at = excluded.updated_at
+                """,
+                (task_type_key, target_date, timestamp, timestamp),
+            )
+            connection.commit()
+
+    def remove_date(self, task_type_key: str, target_date: str) -> None:
+        with self._database.connection() as connection:
+            connection.execute(
+                """
+                DELETE FROM template_schedule_dates
+                WHERE task_type_key = ? AND target_date = ?
+                """,
+                (task_type_key, target_date),
+            )
+            connection.commit()
+
+    def list_overrides(self, task_type_key: str) -> list[dict]:
+        with self._database.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM template_schedule_overrides
+                WHERE task_type_key = ?
+                ORDER BY target_date
+                """,
+                (task_type_key,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_override(
+        self,
+        task_type_key: str,
+        target_date: str,
+        *,
+        disabled: bool,
+        override_title: Optional[str],
+        notes: str,
+        now: datetime,
+    ) -> None:
+        timestamp = now.isoformat()
+        with self._database.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO template_schedule_overrides (
+                    task_type_key, target_date, disabled, override_title,
+                    notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_type_key, target_date) DO UPDATE SET
+                    disabled = excluded.disabled,
+                    override_title = excluded.override_title,
+                    notes = excluded.notes,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    task_type_key,
+                    target_date,
+                    int(disabled),
+                    override_title or None,
+                    notes,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            connection.commit()
+
+    def delete_override(self, task_type_key: str, target_date: str) -> None:
+        with self._database.connection() as connection:
+            connection.execute(
+                """
+                DELETE FROM template_schedule_overrides
+                WHERE task_type_key = ? AND target_date = ?
+                """,
+                (task_type_key, target_date),
+            )
+            connection.commit()
+
+    def active_for_date(self, target_date: str) -> list[dict]:
+        """返回某天应生效的模板清单（含该天覆盖信息）。
+
+        规则：日期集合命中 → 生效；若该天有 override 且 disabled → 不生效；
+        override 提供标题/备注时使用覆盖值。返回字段与 task_types 行合并。
+        """
+        with self._database.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    task_types.*,
+                    template_schedule_overrides.disabled
+                        AS override_disabled,
+                    template_schedule_overrides.override_title,
+                    template_schedule_overrides.notes
+                        AS override_notes
+                FROM task_types
+                JOIN template_schedule_dates
+                    ON task_types.task_key = template_schedule_dates.task_type_key
+                LEFT JOIN template_schedule_overrides
+                    ON template_schedule_dates.task_type_key
+                        = template_schedule_overrides.task_type_key
+                    AND template_schedule_dates.target_date
+                        = template_schedule_overrides.target_date
+                WHERE template_schedule_dates.target_date = ?
+                    AND task_types.enabled = 1
+                ORDER BY task_types.rowid
+                """,
+                (target_date,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            if item.pop("override_disabled"):
+                continue
+            item["item_type"] = (
+                "homework" if item["category"] == "school_homework" else "checkin"
+            )
+            item["title"] = item.pop("override_title") or item["label"]
+            item["notes"] = item.pop("override_notes") or ""
+            item["source"] = "template"
+            result.append(item)
+        return result
 
 
 class DialogueRepository:

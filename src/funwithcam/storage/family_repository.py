@@ -52,6 +52,7 @@ class FamilyRepository:
         self._database = database
 
     def list_agenda(self, item_date: date) -> List[dict]:
+        self._merge_template_items(item_date)
         with self._database.connection() as connection:
             rows = connection.execute(
                 """
@@ -82,6 +83,108 @@ class FamilyRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_agenda_item(self, item_id: int) -> Optional[dict]:
+        with self._database.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    agenda_items.*,
+                    task_types.label AS task_type_label,
+                    task_types.category AS task_category,
+                    task_types.completion_mode,
+                    task_types.finish_prompt,
+                    task_types.include_in_finish_check
+                        AS default_finish_check_enabled,
+                    COALESCE(
+                        agenda_items.finish_check_enabled,
+                        task_types.include_in_finish_check,
+                        0
+                    ) AS include_in_finish_check,
+                    task_types.max_recording_seconds
+                FROM agenda_items
+                LEFT JOIN task_types
+                    ON task_types.task_key = agenda_items.task_type_key
+                WHERE agenda_items.id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def _merge_template_items(self, item_date: date) -> None:
+        """把当天应生效的模板实例合并进 agenda_items（source='template'）。
+
+        模板命中但未建行 → 插入；已建行 → 用覆盖值刷新标题/备注；
+        当天不应生效但已有未完成模板行 → 回收删除（保留已完成记录）。
+        """
+        from .interaction_repository import ScheduleRepository
+
+        schedule = ScheduleRepository(self._database)
+        date_key = item_date.isoformat()
+        active = schedule.active_for_date(date_key)
+        active_keys = {item["task_key"] for item in active}
+        timestamp = datetime.now().isoformat()
+
+        with self._database.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM agenda_items
+                WHERE item_date = ? AND source = 'template'
+                """,
+                (date_key,),
+            ).fetchall()
+            existing = {row["task_type_key"]: dict(row) for row in rows}
+            for item in active:
+                key = item["task_key"]
+                if key in existing:
+                    row = existing[key]
+                    # 标题/备注跟随模板或当天覆盖值；用户手动改过的
+                    # finish_check_enabled 保持原样，不被模板默认值覆盖。
+                    if row["title"] != item["title"] or row["notes"] != item["notes"]:
+                        connection.execute(
+                            """
+                            UPDATE agenda_items
+                            SET title = ?, notes = ?, updated_at = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                item["title"],
+                                item["notes"],
+                                timestamp,
+                                row["id"],
+                            ),
+                        )
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO agenda_items (
+                            item_date, item_type, title, subject,
+                            scheduled_time, estimated_minutes,
+                            preparation_minutes, notes, status,
+                            task_type_key, finish_check_enabled, source,
+                            created_at, updated_at
+                        ) VALUES (?, 'homework', ?, ?, NULL, NULL, 0, ?, 'pending',
+                                  ?, ?, 'template', ?, ?)
+                        """,
+                        (
+                            date_key,
+                            item["title"],
+                            item.get("subject"),
+                            item["notes"],
+                            key,
+                            int(item["include_in_finish_check"]),
+                            timestamp,
+                            timestamp,
+                        ),
+                    )
+            # 回收：当天不再生效的未完成模板实例
+            for key, row in existing.items():
+                if key not in active_keys and row["status"] == "pending":
+                    connection.execute(
+                        "DELETE FROM agenda_items WHERE id = ?",
+                        (row["id"],),
+                    )
+            connection.commit()
+
     def add_agenda(
         self,
         item_date: date,
@@ -103,7 +206,7 @@ class FamilyRepository:
         if scheduled_time is not None:
             _validate_time(scheduled_time)
         if item_type == "homework" and task_type_key is None:
-            task_type_key = "school_homework"
+            task_type_key = "other_homework"
         if task_type_key is not None:
             with self._database.connection() as connection:
                 task_type = connection.execute(
@@ -247,6 +350,18 @@ class FamilyRepository:
             and item["item_type"] != "course"
             and bool(item.get("include_in_finish_check"))
         ]
+
+    def list_temporary_items(self) -> List[dict]:
+        with self._database.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM agenda_items
+                WHERE item_type = 'temporary'
+                ORDER BY item_date, scheduled_time, id
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def delete_agenda(self, item_id: int) -> None:
         with self._database.connection() as connection:

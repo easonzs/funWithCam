@@ -348,6 +348,97 @@ class WebAppTest(unittest.TestCase):
                 self.assertIn('value="小明"', client.get("/settings").text)
                 self.assertNotIn('name="child_name"', client.get("/").text)
 
+    def test_temporary_schedule_tab(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            database = Database(database_path)
+            database.initialize()
+            AuthRepository(database).set_password(
+                "parent",
+                "long-password",
+                datetime.now(timezone.utc),
+            )
+            app = create_app(
+                PROJECT_ROOT / "config" / "config.example.yaml",
+                database_path,
+                precheck_runner=_passed_precheck,
+            )
+
+            with TestClient(app) as client:
+                client.post(
+                    "/login",
+                    data={"username": "parent", "password": "long-password"},
+                    follow_redirects=False,
+                )
+                dashboard = client.get("/")
+                csrf = re.search(
+                    r'name="csrf" value="([^"]+)"',
+                    dashboard.text,
+                ).group(1)
+
+                # tab 渲染
+                page = client.get("/schedule?tab=temporary")
+                self.assertEqual(200, page.status_code)
+                self.assertIn("临时安排", page.text)
+                self.assertIn("还没有临时安排", page.text)
+
+                # 新建表单
+                form = client.get("/schedule/temporary/new")
+                self.assertEqual(200, form.status_code)
+                self.assertIn("添加临时安排", form.text)
+
+                # 添加指定日期的临时安排
+                added = client.post(
+                    "/schedule/temporary",
+                    data={
+                        "csrf": csrf,
+                        "target_date": "2026-11-05",
+                        "title": "开家长会",
+                        "scheduled_time": "16:30",
+                        "estimated_minutes": "60",
+                        "notes": "带接送卡",
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(303, added.status_code)
+                self.assertIn(
+                    "tab=temporary",
+                    added.headers["location"],
+                )
+                self.assertIn("开家长会", client.get("/schedule?tab=temporary").text)
+                # 对应日期安排里能看到
+                self.assertIn(
+                    "开家长会",
+                    client.get("/schedule?date=2026-11-05").text,
+                )
+
+                # 删除
+                page = client.get("/schedule?tab=temporary")
+                match = re.search(
+                    r'action="/schedule/temporary/(\d+)/delete"',
+                    page.text,
+                )
+                self.assertIsNotNone(match)
+                deleted = client.post(
+                    "/schedule/temporary/{}/delete".format(match.group(1)),
+                    data={"csrf": csrf},
+                    follow_redirects=False,
+                )
+                self.assertEqual(303, deleted.status_code)
+                self.assertIn("还没有临时安排", client.get("/schedule?tab=temporary").text)
+
+                # 缺日期时报错
+                bad = client.post(
+                    "/schedule/temporary",
+                    data={"csrf": csrf, "title": "无日期"},
+                    follow_redirects=False,
+                )
+                self.assertEqual(303, bad.status_code)
+                self.assertIn(
+                    "请选择生效日期",
+                    unquote(bad.headers["location"]),
+                )
+
     def test_page_structure_routes_forms_and_navigation(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "test.db"
@@ -558,7 +649,7 @@ class WebAppTest(unittest.TestCase):
                 )
                 self.assertIn("模板如何使用", finish_checks.text)
                 self.assertIn("可用于新增日程", finish_checks.text)
-                self.assertIn("保存 学校作业", finish_checks.text)
+                self.assertIn("保存 数学作业", finish_checks.text)
                 self.assertIn("创建结束检查模板", finish_checks.text)
 
                 guide = client.get("/guide")

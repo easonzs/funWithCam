@@ -3,96 +3,160 @@
 {% block app_content %}
 <header class="page-heading">
   <div>
-    <p class="date-line">{{ today.strftime('%Y年%m月%d日') }} · {{ weekday }}</p>
+    <p class="date-line">{{ target.strftime('%Y年%m月%d日') }} · {{ weekday }}</p>
     <h1>日程</h1>
-    <p class="page-description">管理今天要播报的内容，以及每周自动出现的固定课程。</p>
+    <p class="page-description">先勾选哪些打卡/作业在哪些天生效，再查看当天的完整安排。</p>
   </div>
-  <a class="button button-primary" href="{% if tab == 'courses' %}/courses/new{% else %}/schedule/new{% endif %}">
-    {% if tab == 'courses' %}添加固定课程{% else %}添加今日安排{% endif %}
-  </a>
+  {% if tab == 'courses' %}
+    <div class="heading-actions">
+      <a class="button button-primary" href="/courses/new">添加固定课程</a>
+    </div>
+  {% elif tab == 'temporary' %}
+    <div class="heading-actions">
+      <a class="button button-primary" href="/schedule/temporary/new">添加临时安排</a>
+    </div>
+  {% endif %}
 </header>
 
 {% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
 {% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
 
 <nav class="tab-list" aria-label="日程分类">
-  <a href="/schedule" {% if tab == 'today' %}aria-current="page"{% endif %}>安排编辑</a>
+  <a href="/schedule" {% if tab == 'today' %}aria-current="page"{% endif %}>日程安排</a>
   <a href="/schedule?tab=courses" {% if tab == 'courses' %}aria-current="page"{% endif %}>固定课程</a>
+  <a href="/schedule?tab=temporary" {% if tab == 'temporary' %}aria-current="page"{% endif %}>临时安排</a>
 </nav>
 
 {% if tab == 'today' %}
-  <section class="content-section schedule-section" aria-labelledby="today-schedule-title">
+  <section class="content-section schedule-section" aria-labelledby="week-calendar-title">
     <div class="section-heading">
       <div>
-        <h2 id="today-schedule-title">今天需要完成的事</h2>
-        <p>完成状态只影响家长查看，不会删除原始安排。</p>
+        <h2 id="week-calendar-title">{{ week_start.strftime('%m月%d日') }} — {{ (week_start + timedelta(days=6)).strftime('%m月%d日') }} 本周</h2>
+        <p>绿色表示那天有打卡/作业生效。点某天查看并编辑当天安排。</p>
       </div>
-      <span class="count-badge">{{ items|length }} 项</span>
+      <div class="month-nav">
+        <a class="button button-small" href="/schedule?date={{ week_prev.strftime('%Y-%m-%d') }}" aria-label="上一周">← 上一周</a>
+        <a class="button button-small" href="/schedule?date={{ today.strftime('%Y-%m-%d') }}">回今天</a>
+        <a class="button button-small" href="/schedule?date={{ week_next.strftime('%Y-%m-%d') }}" aria-label="下一周">下一周 →</a>
+        <button class="button button-small" type="button" id="toggle-month-view" aria-expanded="false">展开整月</button>
+      </div>
     </div>
-    {% if items %}
-      <div class="item-list">
-        {% for item in items %}
-          <article class="agenda-row {% if item.status == 'done' %}is-done{% endif %}">
-            <div class="agenda-main">
-              <div class="agenda-meta">
-                <span class="type-tag type-{{ item.item_type }}">
-                  {% if item.item_type == 'homework' %}作业{% elif item.item_type == 'course' %}课程{% else %}临时{% endif %}
-                </span>
-                {% if item.scheduled_time %}<time>{{ item.scheduled_time }}</time>{% endif %}
-                {% if item.estimated_minutes %}<span>预计 {{ item.estimated_minutes }} 分钟</span>{% endif %}
-                {% if item.task_type_label %}<span>{{ item.task_type_label }}</span>{% endif %}
-                {% if item.task_type_label %}
-                  <span class="{% if item.include_in_finish_check %}finish-check-on{% else %}finish-check-off{% endif %}">
-                    {% if item.include_in_finish_check %}结束时询问{% else %}结束时不询问{% endif %}
-                  </span>
-                {% endif %}
-                {% if item.completion_evidence == 'child_confirmed' %}<span>孩子确认完成</span>
-                {% elif item.completion_evidence == 'video' %}<span>已有打卡视频</span>
-                {% elif item.completion_evidence == 'later' %}<span>稍后完成</span>
-                {% elif item.completion_evidence == 'skipped' %}<span>已跳过</span>{% endif %}
-              </div>
-              <h3>{{ item.title }}</h3>
-              {% if item.notes %}<p>{{ item.notes }}</p>{% endif %}
-            </div>
-            <div class="row-actions">
-              {% if item.task_type_label and item.status != 'done' %}
-                <form method="post" action="/today/items/{{ item.id }}/finish-check">
-                  <input type="hidden" name="csrf" value="{{ csrf }}">
-                  <input type="hidden" name="enabled" value="{% if item.include_in_finish_check %}0{% else %}1{% endif %}">
-                  <button class="button button-small" type="submit">
-                    {% if item.include_in_finish_check %}结束时不问{% else %}结束时询问{% endif %}
-                  </button>
-                </form>
-              {% endif %}
-              <form method="post" action="/today/items/{{ item.id }}/status">
-                <input type="hidden" name="csrf" value="{{ csrf }}">
-                <input type="hidden" name="status" value="{% if item.status == 'done' %}pending{% else %}done{% endif %}">
-                <button class="button button-small" type="submit">{% if item.status == 'done' %}恢复{% else %}完成{% endif %}</button>
-              </form>
-              <form method="post" action="/today/items/{{ item.id }}/delete" onsubmit="return confirm('删除这项安排？')">
-                <input type="hidden" name="csrf" value="{{ csrf }}">
-                <button class="button button-small button-danger" type="submit">删除</button>
-              </form>
-            </div>
-          </article>
+    <div class="week-grid" role="list" aria-label="本周日期">
+      {% for day in week_days %}
+        <a
+          class="week-cell {% if day.hits %}has-hits{% endif %} {% if day.date == today %}is-today{% endif %} {% if day.date == target %}is-current{% endif %}"
+          href="/schedule?date={{ day.date.isoformat() }}"
+          {% if day.date == target %}aria-current="date"{% endif %}>
+          <span class="week-day-name">{{ day.name }}</span>
+          <span class="week-day-num">{{ day.day }}</span>
+          {% if day.hits %}<span class="week-day-hits">{{ day.hits }} 项</span>{% endif %}
+        </a>
+      {% endfor %}
+    </div>
+    <div class="month-grid" id="month-view" hidden>
+      <div class="month-weekday-head">
+        {% for name in ['一', '二', '三', '四', '五', '六', '日'] %}<span>{{ name }}</span>{% endfor %}
+      </div>
+      <div class="month-cells">
+        {% for day in month_days %}
+          <a
+            class="month-cell {% if not day.in_month %}is-adjacent{% endif %} {% if day.hits %}has-hits{% endif %} {% if day.date == today %}is-today{% endif %} {% if day.date == target %}is-current{% endif %}"
+            href="/schedule?date={{ day.date.isoformat() }}"
+            {% if day.date == target %}aria-current="date"{% endif %}>
+            <span class="month-day-num">{{ day.day }}</span>
+            {% if day.hits %}<span class="month-day-hits">{{ day.hits }}</span>{% endif %}
+          </a>
         {% endfor %}
       </div>
+    </div>
+  </section>
+
+  <section class="content-section schedule-section" aria-labelledby="day-templates-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="day-templates-title">{{ target.strftime('%m月%d日') }} · 要打卡 / 作业</h2>
+        <p>开启后自动加入下方安排；生效的项目点击行可补充当天说明。</p>
+      </div>
+      <span class="count-badge">{{ task_types|length }} 个模板</span>
+    </div>
+    {% if task_types %}
+      <div class="template-columns">
+        <div class="template-column" aria-label="作业">
+          <h3 class="template-column-title">学校作业</h3>
+          <div class="template-toggle-list" data-date="{{ target.isoformat() }}">
+            {% for t in template_groups.homework %}
+              {% include "_template_toggle_row.html" %}
+            {% endfor %}
+            {% if not template_groups.homework %}
+              <p class="template-column-empty">还没有作业模板</p>
+            {% endif %}
+          </div>
+        </div>
+        <div class="template-column" aria-label="打卡">
+          <h3 class="template-column-title">打卡</h3>
+          <div class="template-toggle-list" data-date="{{ target.isoformat() }}">
+            {% for t in template_groups.checkin %}
+              {% include "_template_toggle_row.html" %}
+            {% endfor %}
+            {% if not template_groups.checkin %}
+              <p class="template-column-empty">还没有打卡模板</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% if template_groups.other %}
+        <div class="template-column" aria-label="其他">
+          <h3 class="template-column-title">其他</h3>
+          <div class="template-toggle-list" data-date="{{ target.isoformat() }}">
+            {% for t in template_groups.other %}
+              {% include "_template_toggle_row.html" %}
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
     {% else %}
       <div class="empty-state">
-        <strong>今天还没有录入安排</strong>
-        <p>学校作业、当天课程和临时事项都可以记在这里。</p>
-        <a class="button button-primary" href="/schedule/new">添加今日安排</a>
+        <strong>还没有可用的打卡/作业模板</strong>
+        <p>先到「配置中心 · 结束检查」里添加打卡类型或作业科目，然后回来勾选生效日期。</p>
+        <a class="button button-primary" href="/config/finish">管理模板</a>
       </div>
     {% endif %}
   </section>
-{% else %}
+
+  <section class="content-section schedule-section" aria-labelledby="today-schedule-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="today-schedule-title">{{ target.strftime('%m月%d日') }} · 完整安排</h2>
+        <p>模板自动生成的项目可在这里标记完成、调整结束询问或删除，不影响模板本身。</p>
+      </div>
+      <span class="count-badge">{{ items|length }} 项</span>
+      <a class="button button-small" href="/schedule/new">添加当天安排</a>
+    </div>
+    <div id="agenda-list" data-date="{{ target.isoformat() }}">
+      {% if items %}
+        <div class="item-list">
+          {% for item in items %}
+            {% include "_agenda_row.html" %}
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state">
+          <strong>这一天还没有安排</strong>
+          <p>在上方勾选打卡/作业，或点击「添加当天安排」录入临时事项。</p>
+          <a class="button button-primary" href="/schedule/new">添加当天安排</a>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+{% elif tab == 'courses' %}
   <section class="content-section schedule-section" aria-labelledby="course-schedule-title">
     <div class="section-heading">
       <div>
         <h2 id="course-schedule-title">每周固定课程</h2>
-        <p>启用的课程会在对应日期自动加入首次简报。</p>
+        <p>启用的课程会在对应日期自动加入当天安排。</p>
       </div>
       <span class="count-badge">{{ weekly_courses|length }} 项</span>
+      <a class="button button-small" href="/courses/new">添加固定课程</a>
     </div>
     {% if weekly_courses %}
       <div class="item-list">
@@ -131,5 +195,158 @@
       </div>
     {% endif %}
   </section>
+{% elif tab == 'temporary' %}
+  <section class="content-section schedule-section" aria-labelledby="temporary-schedule-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="temporary-schedule-title">临时安排</h2>
+        <p>一次性事项，指定日期后会自动加入对应日期的当天安排。</p>
+      </div>
+      <span class="count-badge">{{ temporary_items|length }} 项</span>
+      <a class="button button-small" href="/schedule/temporary/new">添加临时安排</a>
+    </div>
+    {% if temporary_items %}
+      <div class="item-list">
+        {% for item in temporary_items %}
+          <article class="course-row {% if item.status == 'done' %}is-muted{% endif %}">
+            <div class="agenda-main">
+              <div class="agenda-meta">
+                <span class="type-tag type-temporary">临时</span>
+                <span>{{ item.item_date }}</span>
+                {% if item.scheduled_time %}<span>· {{ item.scheduled_time }}</span>{% endif %}
+                {% if item.estimated_minutes %}<span>· 预计 {{ item.estimated_minutes }} 分钟</span>{% endif %}
+                {% if item.status == 'done' %}<span class="status-chip is-ready">已完成</span>{% endif %}
+              </div>
+              <h3>{{ item.title }}</h3>
+              {% if item.notes %}<p>{{ item.notes }}</p>{% endif %}
+            </div>
+            <div class="row-actions">
+              <form method="post" action="/schedule/temporary/{{ item.id }}/delete" onsubmit="return confirm('删除这个临时安排？')">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <button class="button button-small button-danger" type="submit">删除</button>
+              </form>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>还没有临时安排</strong>
+        <p>一次性事项（如开家长会、体检预约）在这里添加，可指定任意日期。</p>
+        <a class="button button-primary" href="/schedule/temporary/new">添加临时安排</a>
+      </div>
+    {% endif %}
+  </section>
 {% endif %}
+<script>
+(function () {
+  "use strict";
+  // 事件委托：AJAX 后 DOM 被替换也不丢事件。
+
+  function handleToggle(form) {
+    var data = new URLSearchParams(new FormData(form));
+    fetch(form.action, {
+      method: "POST",
+      body: data,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    }).then(function (response) {
+      if (!response.ok) {
+        return response.json().then(function (payload) {
+          throw new Error(payload.error || "请求失败");
+        });
+      }
+      return response.json();
+    }).then(function (payload) {
+      if (!payload) return;
+      // 用服务器重建的整行替换当前行（开关、状态、编辑链接一并更新）
+      if (payload.row_html) {
+        var temp = document.createElement("div");
+        temp.innerHTML = payload.row_html.trim();
+        var fresh = temp.querySelector(".template-toggle");
+        if (fresh) form.replaceWith(fresh);
+      }
+      // 刷新完整安排区块（服务端返回的是裸的 .agenda-row 拼接，自己包一层）
+      var agenda = document.getElementById("agenda-list");
+      if (agenda && payload.agenda_html !== undefined) {
+        var holder = document.createElement("div");
+        holder.innerHTML = payload.agenda_html.trim();
+        var rows = holder.querySelectorAll(".agenda-row");
+        if (rows.length) {
+          var list = document.createElement("div");
+          list.className = "item-list";
+          while (holder.firstChild) list.appendChild(holder.firstChild);
+          agenda.innerHTML = list.outerHTML;
+        } else {
+          agenda.innerHTML =
+            '<div class="empty-state"><strong>这一天还没有安排</strong>' +
+            '<p>在上方勾选打卡/作业，或点击「添加当天安排」录入临时事项。</p>' +
+            '<a class="button button-primary" href="/schedule/new">添加当天安排</a></div>';
+        }
+      }
+    }).catch(function (err) {
+      alert(err.message || "操作失败，请刷新页面。");
+    });
+  }
+
+  function handleFinishCheck(form) {
+    var data = new URLSearchParams(new FormData(form));
+    fetch(form.action, {
+      method: "POST",
+      body: data,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    }).then(function (response) {
+      if (!response.ok) {
+        return response.json().then(function (payload) {
+          throw new Error(payload.error || "请求失败");
+        });
+      }
+      return response.json();
+    }).then(function (payload) {
+      if (!payload || !payload.row_html) return;
+      var temp = document.createElement("div");
+      temp.innerHTML = payload.row_html.trim();
+      var fresh = temp.querySelector(".agenda-row");
+      if (fresh) {
+        var current = form.closest(".agenda-row");
+        if (current) current.replaceWith(fresh);
+      }
+    }).catch(function (err) {
+      alert(err.message || "操作失败，请刷新页面。");
+    });
+  }
+
+  document.addEventListener("submit", function (event) {
+    var form = event.target.closest("form");
+    if (!form) return;
+    if (form.classList.contains("template-toggle")) {
+      // 只有点开关本身才拦截；点行内其它可点元素不触发。
+      var submitter = event.submitter;
+      var toggle = form.querySelector(".toggle-switch");
+      if (submitter && submitter !== toggle) return;
+      event.preventDefault();
+      handleToggle(form);
+    }
+  });
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest(".finish-check-toggle");
+    if (!button) return;
+    event.preventDefault();
+    var form = button.closest("form");
+    if (form) handleFinishCheck(form);
+  });
+
+  // 展开 / 收起整月日历
+  var monthButton = document.getElementById("toggle-month-view");
+  var monthView = document.getElementById("month-view");
+  if (monthButton && monthView) {
+    monthButton.addEventListener("click", function () {
+      var expanded = monthView.hidden;
+      monthView.hidden = !expanded;
+      monthButton.setAttribute("aria-expanded", expanded ? "true" : "false");
+      monthButton.textContent = expanded ? "收起整月" : "展开整月";
+    });
+  }
+})();
+</script>
 {% endblock %}

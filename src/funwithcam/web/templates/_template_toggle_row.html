@@ -1,0 +1,43 @@
+{% set active = target.isoformat() in schedule_dates.get(t.task_key, []) %}
+<form method="post" action="/schedule/template/toggle" class="template-toggle">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="task_type_key" value="{{ t.task_key }}">
+  <input type="hidden" name="target_date" value="{{ target.isoformat() }}">
+  <input type="hidden" name="active" value="{% if active %}0{% else %}1{% endif %}">
+  <button class="toggle-switch {% if active %}is-on{% endif %}" type="submit"
+    role="switch" aria-checked="{{ 'true' if active else 'false' }}"
+    aria-label="{% if active %}关闭{% else %}开启{% endif %} {{ t.label }}">
+    <span class="toggle-knob"></span>
+  </button>
+  {% if active %}
+    <a class="template-toggle-main template-toggle-edit" href="/schedule/override?task_type_key={{ t.task_key }}&date={{ target.isoformat() }}" title="编辑当天内容">
+      <div class="template-toggle-title">
+        <strong>{{ t.label }}</strong>
+        <span class="type-tag type-{{ t.category }}">
+          {% if t.category == 'checkin' %}打卡{% elif t.category == 'school_homework' %}作业{% else %}其他{% endif %}
+        </span>
+      </div>
+      <p class="template-toggle-meta">
+        {% if t.completion_mode == 'video' %}视频确认
+        {% elif t.completion_mode == 'parent' %}家长确认
+        {% else %}语音确认{% endif %}
+        <span class="status-chip is-ready">当天生效 · 点此编辑</span>
+      </p>
+    </a>
+  {% else %}
+    <div class="template-toggle-main">
+      <div class="template-toggle-title">
+        <strong>{{ t.label }}</strong>
+        <span class="type-tag type-{{ t.category }}">
+          {% if t.category == 'checkin' %}打卡{% elif t.category == 'school_homework' %}作业{% else %}其他{% endif %}
+        </span>
+      </div>
+      <p class="template-toggle-meta">
+        {% if t.completion_mode == 'video' %}视频确认
+        {% elif t.completion_mode == 'parent' %}家长确认
+        {% else %}语音确认{% endif %}
+        <span class="status-chip is-off">未开启</span>
+      </p>
+    </div>
+  {% endif %}
+</form>

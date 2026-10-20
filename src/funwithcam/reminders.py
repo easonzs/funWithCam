@@ -86,6 +86,20 @@ def build_briefing_message(
         }
         for course in weekly_courses
     )
+    # 带时间的临时安排也按时间播报，与课程一起按时间排序
+    courses.extend(
+        {
+            "title": item["title"],
+            "scheduled_time": item["scheduled_time"],
+            "preparation_minutes": item["preparation_minutes"],
+        }
+        for item in items
+        if (
+            item["item_type"] == "temporary"
+            and item["status"] == "pending"
+            and item["scheduled_time"]
+        )
+    )
     courses.sort(key=lambda item: item["scheduled_time"] or "99:99")
     if courses:
         first = courses[0]
@@ -96,6 +110,12 @@ def build_briefing_message(
         if first["preparation_minutes"]:
             text += "，需要提前{}分钟准备".format(first["preparation_minutes"])
         parts.append(text + "。")
+        # 其余带时间的事项继续播报，不丢临时安排
+        for rest in courses[1:]:
+            parts.append("然后{}有{}。".format(
+                _spoken_time(rest["scheduled_time"]),
+                rest["title"],
+            ))
 
     homework = [
         item["title"]
@@ -108,7 +128,11 @@ def build_briefing_message(
     temporary = [
         item["title"]
         for item in items
-        if item["item_type"] == "temporary" and item["status"] == "pending"
+        if (
+            item["item_type"] == "temporary"
+            and item["status"] == "pending"
+            and not item["scheduled_time"]
+        )
     ]
     if temporary:
         parts.append("另外还有{}。".format(_summarize_names(temporary, "项安排")))
@@ -180,6 +204,20 @@ def build_schedule_summary(
         }
         for course in weekly_courses
     )
+    # 带时间的临时安排也按时间播报，与课程一起按时间排序
+    courses.extend(
+        {
+            "title": item["title"],
+            "scheduled_time": item["scheduled_time"],
+            "preparation_minutes": item["preparation_minutes"],
+        }
+        for item in items
+        if (
+            item["item_type"] == "temporary"
+            and item["status"] == "pending"
+            and item["scheduled_time"]
+        )
+    )
     courses.sort(key=lambda item: item["scheduled_time"] or "99:99")
     if courses:
         first = courses[0]
@@ -192,6 +230,12 @@ def build_schedule_summary(
                 first["preparation_minutes"]
             )
         parts.append(text + "。")
+        # 其余带时间的事项继续播报，不丢临时安排
+        for rest in courses[1:]:
+            parts.append("然后{}有{}。".format(
+                _spoken_time(rest["scheduled_time"]),
+                rest["title"],
+            ))
 
     homework = [
         item["title"]
@@ -204,7 +248,11 @@ def build_schedule_summary(
     temporary = [
         item["title"]
         for item in items
-        if item["item_type"] == "temporary" and item["status"] == "pending"
+        if (
+            item["item_type"] == "temporary"
+            and item["status"] == "pending"
+            and not item["scheduled_time"]
+        )
     ]
     if temporary:
         parts.append("另外还有{}。".format(_summarize_names(temporary, "项安排")))
