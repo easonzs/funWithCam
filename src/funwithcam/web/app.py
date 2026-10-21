@@ -433,6 +433,52 @@ def create_app(
             raise HTTPException(status_code=502, detail="go2rtc motor API failed")
         return response.json()
 
+    @app.post("/camera/speak")
+    async def camera_speak(request: Request):
+        token, _ = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        text = str(form.get("text", "")).strip()
+        if not text:
+            return _redirect("/camera", error="请输入要播放的文字。")
+        if len(text) > 200:
+            return _redirect(
+                "/camera", error="文字过长，最多 200 字。当前 {} 字。".format(len(text))
+            )
+        audio = AudioOutput.from_config(config.audio)
+        now = datetime.now(timezone)
+        try:
+            await asyncio.to_thread(audio.speak, text)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            activities.record(
+                now,
+                "speech",
+                "speech_playback",
+                audio.source,
+                "failed",
+                "摄像头文字播音失败",
+                str(exc),
+            )
+            return _redirect("/camera", error=str(exc))
+        activities.record(
+            datetime.now(timezone),
+            "speech",
+            "speech_playback",
+            audio.source,
+            "success",
+            "摄像头文字播音完成",
+            text,
+        )
+        return _redirect(
+            "/camera",
+            message="已发送到{}：{}".format(
+                "摄像头扬声器"
+                if config.audio.output_source == "camera"
+                else "MacBook 扬声器",
+                text,
+            ),
+        )
+
     @app.exception_handler(_LoginRequired)
     async def login_required_handler(request: Request, exc: _LoginRequired):
         return RedirectResponse("/login", status_code=303)

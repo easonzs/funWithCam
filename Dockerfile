@@ -54,6 +54,24 @@ COPY models/face_detection_yunet_2023mar.onnx \
     models/LICENSE-SFace.txt \
     /app/models/
 
+# Offline TTS fallback: vits-icefall-zh-aishell3 (used when edge-tts is
+# unavailable, e.g. no network). 174 Chinese speakers, ~31MB.
+ARG TTS_MODEL_NAME=vits-icefall-zh-aishell3
+ARG TTS_MODEL_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-icefall-zh-aishell3.tar.bz2
+
+RUN curl --fail --location --retry 3 --output /tmp/tts-model.tar.bz2 \
+        "${TTS_MODEL_URL}" \
+    && tar -xjf /tmp/tts-model.tar.bz2 -C /tmp \
+    && mkdir -p "/app/models/${TTS_MODEL_NAME}" \
+    && cp /tmp/vits-icefall-zh-aishell3/model.onnx \
+          /tmp/vits-icefall-zh-aishell3/lexicon.txt \
+          /tmp/vits-icefall-zh-aishell3/tokens.txt \
+          /tmp/vits-icefall-zh-aishell3/phone.fst \
+          /tmp/vits-icefall-zh-aishell3/date.fst \
+          /tmp/vits-icefall-zh-aishell3/number.fst \
+          "/app/models/${TTS_MODEL_NAME}/" \
+    && rm -rf /tmp/tts-model.tar.bz2 /tmp/vits-icefall-zh-aishell3
+
 RUN useradd --create-home --uid 1000 funwithcam \
     && mkdir -p /app/audio /app/config /app/data \
     && chown -R funwithcam:funwithcam /app

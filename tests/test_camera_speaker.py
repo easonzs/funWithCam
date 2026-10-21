@@ -86,6 +86,7 @@ class CameraSpeakerTest(unittest.TestCase):
                 "FUNWITHCAM_GO2RTC_AUDIO_DIR": "/media",
                 "FUNWITHCAM_GO2RTC_API": "http://go2rtc:1984",
                 "FUNWITHCAM_GO2RTC_STREAM": "study_room",
+                "FUNWITHCAM_TTS_ENGINE": "espeak",
             }
             with (
                 patch.dict(os.environ, environment, clear=False),

@@ -788,6 +788,114 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual("macbook_speaker", events[0]["source"])
         self.assertEqual("speech_output_test", events[0]["event_type"])
 
+    def test_camera_speak_plays_text_to_speaker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            database = Database(database_path)
+            database.initialize()
+            AuthRepository(database).set_password(
+                "parent",
+                "long-password",
+                datetime.now(timezone.utc),
+            )
+            app = create_app(
+                PROJECT_ROOT / "config" / "config.example.yaml",
+                database_path,
+                precheck_runner=_passed_precheck,
+            )
+            audio = MagicMock()
+            audio.source = "camera_speaker"
+
+            with (
+                patch(
+                    "funwithcam.web.app.AudioOutput.from_config",
+                    return_value=audio,
+                ),
+                TestClient(app) as client,
+            ):
+                client.post(
+                    "/login",
+                    data={
+                        "username": "parent",
+                        "password": "long-password",
+                    },
+                )
+                page = client.get("/camera")
+                csrf = re.search(
+                    r'name="csrf" value="([^"]+)"',
+                    page.text,
+                ).group(1)
+                response = client.post(
+                    "/camera/speak",
+                    data={"csrf": csrf, "text": "该休息一下了"},
+                    follow_redirects=False,
+                )
+
+            events = ActivityRepository(database).list_for_date(
+                datetime.now(timezone.utc).date().isoformat()
+            )
+
+        self.assertEqual(303, response.status_code)
+        audio.speak.assert_called_once_with("该休息一下了")
+        self.assertEqual("camera_speaker", events[0]["source"])
+        self.assertEqual("speech_playback", events[0]["event_type"])
+        self.assertEqual("该休息一下了", events[0]["summary"])
+
+    def test_camera_speak_rejects_empty_and_long_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            database = Database(database_path)
+            database.initialize()
+            AuthRepository(database).set_password(
+                "parent",
+                "long-password",
+                datetime.now(timezone.utc),
+            )
+            app = create_app(
+                PROJECT_ROOT / "config" / "config.example.yaml",
+                database_path,
+                precheck_runner=_passed_precheck,
+            )
+            audio = MagicMock()
+            audio.source = "camera_speaker"
+
+            with (
+                patch(
+                    "funwithcam.web.app.AudioOutput.from_config",
+                    return_value=audio,
+                ),
+                TestClient(app) as client,
+            ):
+                client.post(
+                    "/login",
+                    data={
+                        "username": "parent",
+                        "password": "long-password",
+                    },
+                )
+                page = client.get("/camera")
+                csrf = re.search(
+                    r'name="csrf" value="([^"]+)"',
+                    page.text,
+                ).group(1)
+
+                empty = client.post(
+                    "/camera/speak",
+                    data={"csrf": csrf, "text": "   "},
+                    follow_redirects=False,
+                )
+                long = client.post(
+                    "/camera/speak",
+                    data={"csrf": csrf, "text": "长" * 201},
+                    follow_redirects=False,
+                )
+
+        self.assertEqual(303, empty.status_code)
+        self.assertIn("error=", empty.headers["location"])
+        self.assertEqual(303, long.status_code)
+        self.assertIn("error=", long.headers["location"])
+        audio.speak.assert_not_called()
+
     def test_history_page_filters_and_displays_events(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "test.db"

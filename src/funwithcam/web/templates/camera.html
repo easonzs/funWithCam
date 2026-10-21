@@ -61,6 +61,20 @@
       </div>
     </div>
 
+    <div class="camera-speak">
+      <h2>文字播音</h2>
+      <p class="field-help">输入文字发送到摄像头扬声器播放，可用于提醒孩子学习、休息等。</p>
+      <form method="post" action="/camera/speak" class="speak-form" id="speak-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="speak-text">播放内容</label>
+        <textarea id="speak-text" name="text" rows="3" maxlength="200" placeholder="例如：该休息一下了，起来活动活动。" required></textarea>
+        <p class="field-help" id="speak-note">最多 200 字。</p>
+        <div class="form-actions">
+          <button class="button button-primary" type="submit" id="speak-submit">发送到摄像头</button>
+        </div>
+      </form>
+    </div>
+
     <div class="camera-status">
       <h2>当前位置</h2>
       <dl class="detail-list" id="camera-position">
@@ -79,8 +93,8 @@
     <div class="camera-tips">
       <h2>使用提示</h2>
       <ul class="plain-checklist">
-        <li><strong>对讲</strong>：画面右下角按住麦克风说话，声音从摄像头扬声器播出；松开即停。</li>
-        <li><strong>半双工</strong>：对讲时会暂停语音识别，松开后自动恢复。</li>
+        <li><strong>文字播音</strong>：在「文字播音」输入内容后发送，声音从摄像头扬声器播出。</li>
+        <li><strong>语音识别</strong>：播音期间会自动暂停语音识别，播放结束后自动恢复。</li>
         <li><strong>全屏</strong>：双击画面即可放大。</li>
       </ul>
     </div>
@@ -130,6 +144,39 @@
         noteEl.textContent = '移动失败，请重试。';
       }
     });
+  });
+
+  // 文字播音：提交成功后刷新提示，播放期间禁用按钮
+  const speakForm = document.getElementById('speak-form');
+  const speakNote = document.getElementById('speak-note');
+  const speakSubmit = document.getElementById('speak-submit');
+  const speakText = document.getElementById('speak-text');
+
+  speakForm.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    if (!speakText.value.trim()) {
+      speakNote.textContent = '请输入要播放的文字。';
+      return;
+    }
+    speakSubmit.disabled = true;
+    speakSubmit.textContent = '播放中…';
+    speakNote.textContent = '正在生成语音并发送到摄像头，请稍候。';
+    try {
+      const fd = new FormData(speakForm);
+      const r = await fetch(speakForm.action, {method: 'POST', body: fd});
+      if (r.redirected) {
+        // 后端重定向回 /camera，跟随 flash 消息重新加载
+        window.location.href = r.url;
+        return;
+      }
+      speakNote.textContent = '已发送到摄像头扬声器。';
+    } catch (e) {
+      speakNote.textContent = '发送失败，请重试。';
+    } finally {
+      // 未跳转时（发送失败）恢复按钮
+      speakSubmit.disabled = false;
+      speakSubmit.textContent = '发送到摄像头';
+    }
   });
 
   // 检测 iframe 加载失败：mousedown 后仍无画面则显示占位

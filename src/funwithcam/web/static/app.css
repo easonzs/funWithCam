@@ -3837,6 +3837,7 @@ body {
 }
 
 .camera-ptz,
+.camera-speak,
 .camera-status,
 .camera-tips {
   background: var(--surface);
@@ -3846,10 +3847,25 @@ body {
 }
 
 .camera-ptz h2,
+.camera-speak h2,
 .camera-status h2,
 .camera-tips h2 {
   margin: 0 0 8px;
   font-size: 1rem;
+}
+
+.camera-speak form {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.camera-speak textarea {
+  min-height: 72px;
+}
+
+.camera-speak .form-actions {
+  padding-top: 0;
 }
 
 .ptz-pad {

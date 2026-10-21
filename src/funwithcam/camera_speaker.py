@@ -1,11 +1,13 @@
 import argparse
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
 import time
 import uuid
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -68,11 +70,10 @@ def speak_to_camera(
     local_dir.mkdir(parents=True, exist_ok=True)
     _remove_old_audio(local_dir)
 
-    tts_command, source_suffix = _tts_command()
     stem = "speech-{}".format(uuid.uuid4().hex)
-    source_path = local_dir / "{}{}".format(stem, source_suffix)
+    source_path = local_dir / "{}_source.wav".format(stem)
     playback_path = local_dir / "{}-48k-stereo.wav".format(stem)
-    subprocess.run(tts_command(source_path, text), check=True)
+    _synthesize(source_path, text)
     subprocess.run(
         [
             "ffmpeg",
@@ -178,15 +179,107 @@ def inspect_camera_speaker(
     return CameraSpeakerStatus(False, "摄像头流没有反向音频通道")
 
 
-def _tts_command():
+def _synthesize(path: Path, text: str) -> None:
+    """Write synthesized speech for `text` to `path` as mono 16-bit WAV.
+
+    Backend is chosen by ``FUNWITHCAM_TTS_ENGINE``:
+
+    * ``edge`` (default): edge-tts Microsoft neural voice
+      ``zh-CN-XiaoxiaoNeural`` (晓晓), online; falls back to sherpa on failure
+    * ``sherpa``: sherpa-onnx vits-icefall-zh-aishell3 (offline, multi-voice)
+    * anything else: ``say`` on macOS or ``espeak-ng`` as subprocess
+    """
+    engine = os.environ.get("FUNWITHCAM_TTS_ENGINE", "edge").strip().lower()
+    if engine == "edge":
+        try:
+            _edge_tts(path, text)
+        except RuntimeError as exc:
+            LOGGER.warning(
+                "edge-tts 合成失败，回退到本地 sherpa：%s", exc
+            )
+            _sherpa_tts(path, text)
+        return
+    if engine == "sherpa":
+        _sherpa_tts(path, text)
+        return
+    _command_tts(path, text)
+
+
+def _edge_tts(path: Path, text: str) -> None:
+    """Synthesize with Microsoft Edge neural TTS (online, default 晓晓).
+
+    Voice is chosen by ``FUNWITHCAM_TTS_VOICE`` (default
+    ``zh-CN-XiaoxiaoNeural``). The result is saved as MP3 then converted to
+    mono 16-bit WAV, matching the pipeline's expectation.
+    """
+    import subprocess
+
+    voice = os.environ.get(
+        "FUNWITHCAM_TTS_VOICE", "zh-CN-XiaoxiaoNeural"
+    )
+    mp3_path = str(path).replace(".wav", ".mp3")
+    try:
+        import edge_tts
+    except ImportError:
+        raise RuntimeError(
+            "FUNWITHCAM_TTS_ENGINE=edge 需要 pip install edge-tts"
+        ) from None
+
+    async def _run() -> None:
+        comm = edge_tts.Communicate(text, voice)
+        await comm.save(mp3_path)
+
+    try:
+        import asyncio
+
+        asyncio.run(_run())
+    except Exception as exc:
+        mp3 = Path(mp3_path)
+        if mp3.exists():
+            mp3.unlink(missing_ok=True)
+        raise RuntimeError(
+            "edge-tts 合成失败（需要联网）：{}".format(exc)
+        ) from exc
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            mp3_path,
+            "-ar",
+            "48000",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
+            "-y",
+            str(path),
+        ],
+        check=True,
+    )
+
+
+def _command_tts(path: Path, text: str) -> None:
     if shutil.which("say") is not None:
-        return (
-            lambda path, text: ["say", "-o", str(path), text],
-            ".aiff",
-        )
+        voice = os.environ.get("FUNWITHCAM_TTS_VOICE")
+        rate = os.environ.get("FUNWITHCAM_TTS_RATE")
+
+        def _say(path: str, text: str) -> list[str]:
+            command = ["say", "-o", str(path)]
+            if voice:
+                command.extend(["-v", voice])
+            if rate:
+                command.extend(["-r", rate])
+            command.append(text)
+            return command
+
+        subprocess.run(_say(str(path), text), check=True)
+        return
     if shutil.which("espeak-ng") is not None:
-        return (
-            lambda path, text: [
+        subprocess.run(
+            [
                 "espeak-ng",
                 "-v",
                 os.environ.get("FUNWITHCAM_TTS_VOICE", "cmn"),
@@ -196,16 +289,117 @@ def _tts_command():
                 str(path),
                 text,
             ],
-            ".wav",
+            check=True,
         )
+        return
     raise RuntimeError(
-        "摄像头播报需要 macOS say 或 espeak-ng 生成语音"
+        "摄像头播报需要 macOS say、espeak-ng 或 FUNWITHCAM_TTS_ENGINE=sherpa 生成语音"
     )
+
+
+_tts_model = None
+_TTS_MODEL_DIR = "/app/models/vits-icefall-zh-aishell3"
+
+
+def _sherpa_tts(path: Path, text: str) -> None:
+    """Synthesize with sherpa-onnx vits-icefall-zh-aishell3.
+
+    The model loads lazily once per process and is shared across calls.
+    Speaker is chosen by ``FUNWITHCAM_TTS_VOICE`` (a speaker index or the
+    SSB#### name from ``speakers.txt``; default 0).
+    """
+    global _tts_model
+    if _tts_model is None:
+        try:
+            import sherpa_onnx
+        except ImportError:
+            raise RuntimeError(
+                "FUNWITHCAM_TTS_ENGINE=sherpa 需要 pip install sherpa-onnx"
+            ) from None
+        model = Path(os.environ.get("FUNWITHCAM_AISHELL3_MODEL", _TTS_MODEL_DIR))
+        vits = sherpa_onnx.OfflineTtsVitsModelConfig(
+            str(model / "model.onnx"),
+            str(model / "lexicon.txt"),
+            str(model / "tokens.txt"),
+            "",
+            "",
+        )
+        model_config = sherpa_onnx.OfflineTtsModelConfig()
+        model_config.vits = vits
+        model_config.provider = "cpu"
+        model_config.num_threads = 4
+        config = sherpa_onnx.OfflineTtsConfig()
+        config.model = model_config
+        config.rule_fsts = "{}/phone.fst,{}/date.fst,{}/number.fst".format(
+            model, model, model
+        )
+        config.max_num_sentences = 1
+        _tts_model = sherpa_onnx.OfflineTts(config)
+
+    sid = _speaker_id(_tts_model)
+    audio = _tts_model.generate(text, sid=sid, speed=1.0)
+    if len(audio.samples) == 0:
+        raise RuntimeError(
+            "摄像头播报：sherpa-onnx 未能生成语音（文本可能含有无法合成的字符）"
+        )
+    samples = _normalize_level(list(audio.samples))
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(audio.sample_rate)
+        out.writeframes(
+            b"".join(
+                int(max(-32767.0, min(32767.0, sample * 32767.0))).to_bytes(
+                    2, "little", signed=True
+                )
+                for sample in samples
+            )
+        )
+
+
+def _normalize_level(samples: list[float], target_rms: float = 0.14) -> list[float]:
+    """Scale sherpa float samples so语音清晰可闻.
+
+    aishell3 模型输出电平很低（峰值约 0.2，均值约 -27dBFS），直接写 int16 会
+    静音或极小声。按 RMS 归一化到 target_rms（约 -17dBFS），并限制峰值防止削波。
+    """
+    count = len(samples)
+    if count == 0:
+        return samples
+    rms = math.sqrt(sum(sample * sample for sample in samples) / count)
+    if rms < 1e-9:
+        return samples
+    gain = target_rms / rms
+    peak = max(abs(sample) for sample in samples)
+    if peak > 0:
+        gain = min(gain, 0.95 / peak)
+    if gain == 1.0:
+        return samples
+    return [sample * gain for sample in samples]
+
+
+def _speaker_id(tts_model) -> int:
+    """Resolve FUNWITHCAM_TTS_VOICE to a speaker id for a loaded model."""
+    voice = os.environ.get("FUNWITHCAM_TTS_VOICE", "0").strip()
+    if voice.isdigit():
+        return min(int(voice), tts_model.num_speakers - 1)
+    speakers_file = Path(os.environ.get("FUNWITHCAM_AISHELL3_MODEL", _TTS_MODEL_DIR)) / "speakers.txt"
+    if speakers_file.exists():
+        for idx, name in enumerate(
+            line.strip() for line in speakers_file.read_text().splitlines() if line.strip()
+        ):
+            if name == voice:
+                return min(idx, tts_model.num_speakers - 1)
+    return 0
 
 
 def _remove_old_audio(directory: Path) -> None:
     cutoff = time.time() - 3600
-    for pattern in ("speech-*.wav", "speech-*.aiff"):
+    for pattern in (
+        "speech-*.wav",
+        "speech-*.aiff",
+        "speech-*_source.wav",
+    ):
         for path in directory.glob(pattern):
             try:
                 if path.stat().st_mtime < cutoff:
