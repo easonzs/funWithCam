@@ -15,5 +15,5 @@ config/*.yaml
 *.db-wal
 models/sherpa-onnx-*/
 runtime/
-backups/*.tar.gz
+backups/
 
