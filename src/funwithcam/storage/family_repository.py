@@ -25,6 +25,15 @@ DEFAULT_SETTINGS = {
     "dialogue_max_prompts": "3",
     "away_auto_pause_minutes": "2",
     "away_interrupted_minutes": "60",
+    # 古诗解读的 DeepSeek API Key。留空则只用内置离线诗库。
+    "deepseek_api_key": "",
+    # 古诗解读使用的 DeepSeek 模型。
+    "deepseek_model": "deepseek-flash",
+    # DeepSeek 最长输出 token 数（含思维链）。deepseek-flash 是推理模型，
+    # 长诗需要更多 token，太短会只推理不输出。默认 4000。
+    "deepseek_max_tokens": "4000",
+    # DeepSeek 请求超时秒数。长诗推理+输出可能需要 10-20 秒。
+    "deepseek_timeout_seconds": "30",
 }
 REMINDER_RULE_SETTINGS = frozenset(
     {

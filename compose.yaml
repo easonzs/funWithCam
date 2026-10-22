@@ -44,6 +44,7 @@ services:
       FUNWITHCAM_GO2RTC_STREAM: study_room
       FUNWITHCAM_AUDIO_DIR: /app/audio
       FUNWITHCAM_GO2RTC_AUDIO_DIR: /media
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     ports:
       - "${WEB_BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8000}:8000"
     volumes:

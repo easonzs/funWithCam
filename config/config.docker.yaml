@@ -58,6 +58,14 @@ speech:
   device:
   command_cooldown_seconds: 2
 
+poem:
+  # 古诗解读：在线 DeepSeek 优先，未配置 API Key 或请求失败时降级到内置诗库。
+  enabled: true
+  api_key_env: DEEPSEEK_API_KEY
+  model: deepseek-flash
+  timeout_seconds: 30
+  max_tokens: 4000
+
 identity:
   detector_model: models/face_detection_yunet_2023mar.onnx
   recognizer_model: models/face_recognition_sface_2021dec.onnx

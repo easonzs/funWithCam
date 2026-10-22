@@ -68,10 +68,54 @@
         </dd>
       </div>
       <div>
+        <dt>古诗解读在线来源</dt>
+        <dd class="{% if deepseek_configured %}is-ready{% else %}is-unavailable{% endif %}">
+          {% if deepseek_configured %}DeepSeek 已配置{% else %}仅离线诗库{% endif %}
+        </dd>
+      </div>
+      <div>
         <dt>本地数据</dt>
         <dd class="is-ready">保存在这台 MacBook</dd>
       </div>
     </dl>
+  </section>
+
+  <section class="settings-section" aria-labelledby="poem-source-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="poem-source-title">古诗解读在线来源（DeepSeek）</h2>
+        <p>填入 API Key 后，古诗解读优先请求 DeepSeek；请求失败或留空时，回退到内置离线诗库。</p>
+      </div>
+    </div>
+    <form method="post" action="/settings" class="form-grid settings-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="span-2">
+        <span>DeepSeek API Key</span>
+        <input type="password" name="deepseek_api_key" value="{{ settings.deepseek_api_key }}" placeholder="留空则只用离线诗库" autocomplete="off">
+        <small>只保存在本机数据库中，不会上传或写入配置文件。</small>
+      </label>
+      <label class="span-2">
+        <span>DeepSeek 模型</span>
+        <select name="deepseek_model">
+          <option value="deepseek-flash" {% if settings.deepseek_model == 'deepseek-flash' %}selected{% endif %}>deepseek-flash（当前 Flash 模型，通用对话）</option>
+          <option value="deepseek-v4-pro" {% if settings.deepseek_model == 'deepseek-v4-pro' %}selected{% endif %}>deepseek-v4-pro（V4-Pro，更强、更慢）</option>
+        </select>
+        <small>默认 deepseek-flash 即可；v4-pro 更强但更慢，古诗解读一般用不到。</small>
+      </label>
+      <label class="span-2">
+        <span>最长输出 token 数</span>
+        <input type="number" name="deepseek_max_tokens" min="800" max="8000" step="100" value="{{ settings.deepseek_max_tokens }}">
+        <small>deepseek-flash 是推理模型，长诗（如《将进酒》）推理会占大量 token；太小会只推理不输出导致解读失败。默认 4000。</small>
+      </label>
+      <label class="span-2">
+        <span>请求超时（秒）</span>
+        <input type="number" name="deepseek_timeout_seconds" min="10" max="120" step="5" value="{{ settings.deepseek_timeout_seconds }}">
+        <small>长诗推理+输出可能要 10-20 秒。默认 30 秒。</small>
+      </label>
+      <div class="form-actions span-2">
+        <button class="button button-primary" type="submit">保存古诗解读设置</button>
+      </div>
+    </form>
   </section>
 
   <section class="settings-section calibration-setting" aria-labelledby="calibration-setting-title">

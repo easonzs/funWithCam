@@ -79,6 +79,21 @@ class SpeechConfig:
 
 
 @dataclass(frozen=True)
+class PoemConfig:
+    """古诗解读：DeepSeek 在线优先，API 未配置或失败时降级到内置诗库。
+
+    ``model`` 是配置文件里的默认值；web 设置页保存的 ``deepseek_model``
+    （family_settings）优先于它。
+    """
+
+    enabled: bool
+    api_key_env: str
+    model: str
+    timeout_seconds: float
+    max_tokens: int
+
+
+@dataclass(frozen=True)
 class IdentityConfig:
     detector_model: Path
     recognizer_model: Path
@@ -120,6 +135,7 @@ class AppConfig:
     calibration: CalibrationConfig
     audio: AudioConfig
     speech: SpeechConfig
+    poem: PoemConfig
     identity: IdentityConfig
     checkin_ptz: CheckinPtzConfig
     web: WebConfig
@@ -251,6 +267,19 @@ def load_config(path: Path) -> AppConfig:
             },
         ),
         "speech",
+    )
+    poem = _as_mapping(
+        raw.get(
+            "poem",
+            {
+                "enabled": True,
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "model": "deepseek-flash",
+                "timeout_seconds": 30,
+                "max_tokens": 4000,
+            },
+        ),
+        "poem",
     )
     identity = _as_mapping(_require(raw, "identity"), "identity")
     web = _as_mapping(_require(raw, "web"), "web")
@@ -421,6 +450,19 @@ def load_config(path: Path) -> AppConfig:
             command_cooldown_seconds=_positive(
                 _require(speech, "command_cooldown_seconds"),
                 "speech.command_cooldown_seconds",
+            ),
+        ),
+        poem=PoemConfig(
+            enabled=_boolean(_require(poem, "enabled"), "poem.enabled"),
+            api_key_env=str(_require(poem, "api_key_env")),
+            model=str(_require(poem, "model")),
+            timeout_seconds=_positive(
+                _require(poem, "timeout_seconds"),
+                "poem.timeout_seconds",
+            ),
+            max_tokens=_positive_int(
+                _require(poem, "max_tokens"),
+                "poem.max_tokens",
             ),
         ),
         identity=IdentityConfig(

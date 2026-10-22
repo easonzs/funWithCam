@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import quote, urlencode
+from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -38,6 +39,7 @@ from funwithcam.calibration_steps import (
 from funwithcam.camera_speaker import inspect_camera_speaker
 from funwithcam.config import load_config
 from funwithcam.identity.repository import FaceProfileRepository
+from funwithcam.poems import interpret_with_deepseek, match_poem
 from funwithcam.precheck import (
     CameraPrecheckRunner,
     PrecheckCoordinator,
@@ -1355,15 +1357,17 @@ def create_app(
     ):
         _, session = _require_session(request, auth, timezone)
         today = datetime.now(timezone).date()
+        settings = family.get_settings()
         return render_page(
             request,
             "settings.html",
             session,
             "settings",
-            settings=family.get_settings(),
+            settings=settings,
             calibration_version=calibrations.get_latest_version(),
             speech_enabled=config.speech.enabled,
             camera_configured=bool(config.video.stream_url.strip()),
+            deepseek_configured=bool(settings.get("deepseek_api_key", "").strip()),
             today=today,
             message=message,
             error=error,
@@ -2078,28 +2082,234 @@ def create_app(
         token, _ = _require_session(request, auth, timezone)
         form = await request.form()
         _require_csrf(token, str(form.get("csrf", "")))
-        try:
-            family.save_settings(
-                {
-                    "child_name": str(form.get("child_name", "")),
-                    "first_briefing_weekday_time": str(
-                        form.get("first_briefing_weekday_time", "")
-                    ),
-                    "first_briefing_rest_day_time": str(
-                        form.get("first_briefing_rest_day_time", "")
-                    ),
-                    "second_reminder_weekday_time": str(
-                        form.get("second_reminder_weekday_time", "")
-                    ),
-                    "second_reminder_rest_day_time": str(
-                        form.get("second_reminder_rest_day_time", "")
-                    ),
-                },
-                datetime.now(timezone),
+        values = {
+            "child_name": str(form.get("child_name", "")),
+            "first_briefing_weekday_time": str(
+                form.get("first_briefing_weekday_time", "")
+            ),
+            "first_briefing_rest_day_time": str(
+                form.get("first_briefing_rest_day_time", "")
+            ),
+            "second_reminder_weekday_time": str(
+                form.get("second_reminder_weekday_time", "")
+            ),
+            "second_reminder_rest_day_time": str(
+                form.get("second_reminder_rest_day_time", "")
+            ),
+        }
+        if any(
+            key in form
+            for key in (
+                "deepseek_api_key",
+                "deepseek_model",
+                "deepseek_max_tokens",
+                "deepseek_timeout_seconds",
             )
+        ):
+            # 古诗解读表单单独提交；保留长期设置现值。
+            current = family.get_settings()
+            for key in (
+                "child_name",
+                "first_briefing_weekday_time",
+                "first_briefing_rest_day_time",
+                "second_reminder_weekday_time",
+                "second_reminder_rest_day_time",
+            ):
+                values[key] = current.get(key, "")
+            if "deepseek_api_key" in form:
+                values["deepseek_api_key"] = str(
+                    form.get("deepseek_api_key", "")
+                ).strip()
+        try:
+            if "deepseek_model" in form:
+                model = str(form.get("deepseek_model", "")).strip()
+                if model not in ("deepseek-flash", "deepseek-v4-pro"):
+                    raise ValueError("无效的 DeepSeek 模型")
+                values["deepseek_model"] = model
+            if "deepseek_max_tokens" in form:
+                try:
+                    max_tokens = int(form.get("deepseek_max_tokens", ""))
+                except ValueError:
+                    raise ValueError("DeepSeek 最长输出 token 数必须是数字")
+                if not 800 <= max_tokens <= 8000:
+                    raise ValueError("DeepSeek 最长输出 token 数应在 800 到 8000 之间")
+                values["deepseek_max_tokens"] = str(max_tokens)
+            if "deepseek_timeout_seconds" in form:
+                try:
+                    timeout_seconds = int(
+                        form.get("deepseek_timeout_seconds", "")
+                    )
+                except ValueError:
+                    raise ValueError("DeepSeek 超时秒数必须是数字")
+                if not 10 <= timeout_seconds <= 120:
+                    raise ValueError("DeepSeek 超时秒数应在 10 到 120 之间")
+                values["deepseek_timeout_seconds"] = str(timeout_seconds)
+            family.save_settings(values, datetime.now(timezone))
         except ValueError as exc:
             return _redirect("/settings", error=str(exc))
+        if any(
+            key in form
+            for key in (
+                "deepseek_api_key",
+                "deepseek_model",
+                "deepseek_max_tokens",
+                "deepseek_timeout_seconds",
+            )
+        ):
+            return _redirect("/settings", message="古诗解读设置已保存")
         return _redirect("/settings", message="长期设置已保存")
+
+    @app.get("/poem-chat", response_class=HTMLResponse)
+    def poem_chat_page(
+        request: Request,
+        message: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        """古诗解读调试页：手动输入诗名，验证 DeepSeek 配置与返回。"""
+        _, session = _require_session(request, auth, timezone)
+        settings = family.get_settings()
+        effective_model = (
+            str(settings.get("deepseek_model", "")).strip()
+            or config.poem.model
+        )
+        effective_timeout = (
+            _optional_int(settings.get("deepseek_timeout_seconds", ""))
+            or config.poem.timeout_seconds
+        )
+        effective_max_tokens = (
+            _optional_int(settings.get("deepseek_max_tokens", ""))
+            or config.poem.max_tokens
+        )
+        return render_page(
+            request,
+            "poem_chat.html",
+            session,
+            "poem_chat",
+            api_key_configured=bool(
+                settings.get("deepseek_api_key", "").strip()
+            ),
+            effective_model=effective_model,
+            config_model=config.poem.model,
+            effective_timeout=effective_timeout,
+            effective_max_tokens=effective_max_tokens,
+            timeout_seconds=effective_timeout,
+            max_tokens=effective_max_tokens,
+            message=message,
+            error=error,
+        )
+
+    @app.post("/poem-chat")
+    async def poem_chat_test(request: Request):
+        """手动触发一次古诗解读，走与语音相同的两级解析，展示每步结果。"""
+        token, session = _require_session(request, auth, timezone)
+        form = await request.form()
+        _require_csrf(token, str(form.get("csrf", "")))
+        spoken = str(form.get("poem", "")).strip()
+        if not spoken:
+            return _redirect("/poem-chat", error="请输入诗名或提示语")
+        settings = family.get_settings()
+        api_key = str(settings.get("deepseek_api_key", "")).strip()
+        model = (
+            str(settings.get("deepseek_model", "")).strip()
+            or config.poem.model
+        )
+        max_tokens = (
+            _optional_int(settings.get("deepseek_max_tokens", ""))
+            or config.poem.max_tokens
+        )
+        timeout_seconds = (
+            _optional_int(settings.get("deepseek_timeout_seconds", ""))
+            or config.poem.timeout_seconds
+        )
+        now = datetime.now(timezone)
+        # 第一步：DeepSeek 在线解读（若有 key）。错误不吞掉，展示给调试者。
+        deepseek = None
+        poem = None
+        source = "offline"
+        try:
+            poem = interpret_with_deepseek(
+                spoken,
+                config.poem,
+                api_key=api_key,
+                model=model,
+                max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
+                on_result=lambda r: activities.record(
+                    now,
+                    "speech",
+                    "poem_deepseek_request",
+                    "web_debug",
+                    r["status"],
+                    "DeepSeek 古诗解读成功" if r["status"] == "success"
+                    else "DeepSeek 古诗解读失败",
+                    "《{}》 · {} · {}ms · {} 段".format(
+                        r.get("poem_title", ""),
+                        r.get("model", ""),
+                        r.get("latency_ms", 0),
+                        r.get("segments", 0),
+                    )
+                    if r["status"] == "success"
+                    else r.get("error", ""),
+                    r,
+                ),
+            )
+            poem["_source"] = "deepseek"
+            source = "deepseek"
+            deepseek = {
+                "status": "success",
+                "model": model,
+                "latency_ms": poem.get("_latency_ms"),
+                "raw": poem,
+            }
+        except (ValueError, URLError, HTTPError, OSError) as exc:
+            deepseek = {
+                "status": "failed",
+                "model": model,
+                "error": str(exc),
+            }
+            activities.record(
+                now,
+                "speech",
+                "poem_deepseek_request",
+                "web_debug",
+                "failed",
+                "DeepSeek 古诗解读失败",
+                str(exc),
+                {"status": "failed", "poem_title": spoken, "model": model,
+                 "error": str(exc)},
+            )
+            # 第二步：降级到离线诗库
+            poem = match_poem(spoken)
+            source = "offline"
+        page_ctx = {
+            "api_key_configured": bool(api_key),
+            "effective_model": model,
+            "config_model": config.poem.model,
+            "timeout_seconds": timeout_seconds,
+            "max_tokens": max_tokens,
+        }
+        if poem is None:
+            return render_page(
+                request,
+                "poem_chat.html",
+                session,
+                "poem_chat",
+                **page_ctx,
+                result_host="none",
+                poem=None,
+                deepseek=deepseek,
+                error="本地诗库和在线解读都没有这首诗：{}".format(spoken),
+            )
+        return render_page(
+            request,
+            "poem_chat.html",
+            session,
+            "poem_chat",
+            **page_ctx,
+            result_host=source,
+            poem=poem,
+            deepseek=deepseek,
+        )
 
     @app.post("/reminders")
     async def save_reminder_settings(request: Request):

@@ -1,0 +1,133 @@
+{% extends "app_shell.html" %}
+{% block title %}古诗解读调试 · FunWithCam{% endblock %}
+{% block app_content %}
+<header class="page-heading">
+  <div>
+    <h1>古诗解读调试</h1>
+    <p class="page-description">手动输入一句话，验证当前 DeepSeek 配置是否生效、返回是否符合预期。与语音口令走相同的两级解析：DeepSeek 在线 → 内置离线诗库。</p>
+  </div>
+</header>
+
+<section class="settings-section">
+  <div class="section-heading">
+    <div>
+      <h2>当前配置</h2>
+      <p>显示实际生效的 DeepSeek 配置。修改后到「家庭基础设置」保存即可，这里会立即反映。</p>
+    </div>
+  </div>
+  <div class="keyword-example" aria-label="生效配置">
+    <div class="debug-grid">
+      <span class="debug-key">API Key</span>
+      <span class="debug-value">{% if api_key_configured %}<span class="ok">已配置</span>{% else %}<span class="warn">未配置 → 将直接走离线诗库</span>{% endif %}</span>
+      <span class="debug-key">生效模型</span>
+      <span class="debug-value"><code>{{ effective_model }}</code>{% if effective_model != config_model %}<span class="debug-note">配置文件兜底默认 <code>{{ config_model }}</code></span>{% endif %}</span>
+      <span class="debug-key">最长输出 token</span>
+      <span class="debug-value"><code>{{ max_tokens }}</code></span>
+      <span class="debug-key">超时</span>
+      <span class="debug-value">{{ timeout_seconds }} 秒</span>
+    </div>
+  </div>
+</section>
+
+{% if message %}<p class="notice notice-success" role="status">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="settings-section">
+  <div class="section-heading">
+    <div>
+      <h2>调试解读</h2>
+      <p>试试孩子可能说的话，例如「讲一下静夜思」「悯农是什么意思」。在线调用最多等 {{ timeout_seconds }} 秒，请耐心。</p>
+    </div>
+  </div>
+  <form method="post" action="/poem-chat" class="form-grid settings-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="span-2">
+      <span>输入诗句、诗名或完整口令</span>
+      <input type="text" name="poem" placeholder="例如：讲一下静夜思" required autofocus>
+    </label>
+    <div class="form-actions span-2">
+      <button class="button button-primary" type="submit">调试解读</button>
+    </div>
+  </form>
+</section>
+
+{% if result_host %}
+<section class="settings-section" aria-labelledby="debug-result-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="debug-result-title">解读结果</h2>
+      <p>这次走的是
+        {% if result_host == 'deepseek' %}
+          <strong class="ok">DeepSeek 在线解读</strong>
+        {% elif result_host == 'offline' %}
+          <strong class="warn">内置离线诗库</strong>
+        {% else %}
+          <strong class="warn">未命中（无结果）</strong>
+        {% endif %}
+        。
+      </p>
+    </div>
+  </div>
+
+  {% if deepseek %}
+  <div class="keyword-example" aria-label="DeepSeek 请求详情">
+    <div class="debug-grid">
+      <span class="debug-key">DeepSeek 状态</span>
+      <span class="debug-value">
+        {% if deepseek.status == 'success' %}
+          <span class="ok">成功</span>
+        {% else %}
+          <span class="warn">失败</span>
+        {% endif %}
+      </span>
+      {% if deepseek.model %}<span class="debug-key">请求模型</span><span class="debug-value"><code>{{ deepseek.model }}</code></span>{% endif %}
+      {% if deepseek.latency_ms %}<span class="debug-key">耗时</span><span class="debug-value">{{ deepseek.latency_ms }} ms</span>{% endif %}
+      {% if deepseek.status == 'failed' %}
+        <span class="debug-key">错误详情</span>
+        <span class="debug-value"><code class="error-text">{{ deepseek.error }}</code></span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if result_host == 'offline' %}
+  <div class="keyword-example" aria-label="降级说明">
+    <p>
+      {% if api_key_configured %}
+        在线解读未返回可用结果，已自动降级到内置诗库。
+      {% else %}
+        未配置 DeepSeek API Key，直接使用内置离线诗库。
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  {% if poem %}
+  <article class="poem-result">
+    <h3>《{{ poem.title }}》{{ poem.dynasty }}代 · {{ poem.author }}</h3>
+    {% if poem.segments is defined %}
+    <ol class="poem-segments">
+      {% for segment in poem.segments %}
+      <li>
+        <p class="poem-original">{{ segment.original }}</p>
+        <p class="poem-translation">{{ segment.translation }}</p>
+      </li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+    <p class="poem-meaning"><strong>中心意思：</strong>{{ poem.meaning }}</p>
+  </article>
+  {% endif %}
+
+  {% if result_host == 'none' %}
+  <p class="notice notice-error" role="alert">
+    {% if deepseek and deepseek.status == 'failed' %}
+    在线解读失败且离线诗库未收录，无法解读。<code>{{ deepseek.error }}</code>
+    {% else %}
+    本地诗库和在线解读都没有这首诗，无法解读。
+    {% endif %}
+  </p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

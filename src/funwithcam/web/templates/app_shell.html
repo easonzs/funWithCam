@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block body %}
 <a class="skip-link" href="#main-content">跳到主要内容</a>
-{% set config_aliases = ['settings', 'speech', 'speech_templates', 'interaction', 'finish_checks', 'reminders'] %}
+{% set config_aliases = ['settings', 'speech', 'speech_templates', 'interaction', 'finish_checks', 'reminders', 'poem_chat'] %}
 {% set in_config = active_nav == 'config' or active_nav in config_aliases %}
 {% set current_config_section = config_section|default({
   'settings': 'settings',
@@ -9,7 +9,8 @@
   'speech_templates': 'speech-templates',
   'interaction': 'interaction',
   'finish_checks': 'finish',
-  'reminders': 'studying'
+  'reminders': 'studying',
+  'poem_chat': 'poem_chat'
 }.get(active_nav, 'studying'), true) %}
 {% set config_labels = {
   'arrival': '到家与日程提醒',
@@ -24,7 +25,8 @@
   'device': '摄像头与声音',
   'profile': '孩子与基准',
   'settings': '家庭基础设置',
-  'privacy': '数据与隐私'
+  'privacy': '数据与隐私',
+  'poem_chat': '古诗解读调试'
 } %}
 <header class="app-header">
   <div class="header-inner">
@@ -74,6 +76,7 @@
         <a href="/config/profile" class="{% if current_config_section == 'profile' %}is-active{% endif %}"><span class="nav-glyph">◎</span>孩子与基准</a>
         <a href="/config/settings" class="{% if current_config_section == 'settings' %}is-active{% endif %}"><span class="nav-glyph">⚙</span>家庭基础设置</a>
         <a href="/config/privacy" class="{% if current_config_section == 'privacy' %}is-active{% endif %}"><span class="nav-glyph">◇</span>数据与隐私</a>
+        <a href="/poem-chat" class="{% if current_config_section == 'poem_chat' %}is-active{% endif %}"><span class="nav-glyph">✎</span>古诗解读调试</a>
       </nav>
     {% elif active_nav == 'guide' %}
       <div class="sidebar-heading">

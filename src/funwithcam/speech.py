@@ -17,6 +17,7 @@ from .audio import AudioOutput
 from .checkin import CheckinRecorder
 from .checkin_ptz import CheckinPtzController
 from .config import AppConfig, SpeechConfig, load_config
+from .poems import resolve_poem
 from .precheck import PrecheckCoordinator, PrecheckResult
 from .runtime_state import set_checkin_ptz_active
 from .storage.activity_repository import ActivityRepository
@@ -30,6 +31,7 @@ from .storage.interaction_repository import (
     complete_confirmation_prompt,
 )
 from .storage.study_session_repository import StudySessionRepository
+from .text_util import normalize_speech_text
 
 
 LOGGER = logging.getLogger(__name__)
@@ -48,6 +50,7 @@ PTZ_RIGHT = "ptz_right"
 PTZ_UP = "ptz_up"
 PTZ_DOWN = "ptz_down"
 PTZ_ARM = "ptz_arm"
+INTERPRET_POEM = "interpret_poem"
 
 # 摄像头调整模式的有效窗口（秒）：启动后窗口内转向口令直接生效。
 PTZ_ARM_WINDOW_SECONDS = 60
@@ -145,6 +148,12 @@ SPEECH_COMMAND_GUIDE = (
         "phrases": DEFAULT_SPEECH_PHRASES[PTZ_ARM],
         "description": "开启摄像头调整模式，60 秒内转向口令直接生效。",
     },
+    {
+        "command": INTERPRET_POEM,
+        "label": "解读古诗",
+        "phrases": DEFAULT_SPEECH_PHRASES[INTERPRET_POEM],
+        "description": "说出诗名，播报全诗和逐句白话解读；在线解读失败时使用内置诗库。",
+    },
 )
 
 
@@ -162,14 +171,6 @@ class SpeechMatch:
         return mode == "always" or (
             mode == "ambiguous" and self.quality != "exact"
         )
-
-
-def normalize_speech_text(text: str) -> str:
-    return "".join(
-        character
-        for character in text.lower()
-        if character not in " ，。！？,.!?、\t\r\n"
-    )
 
 
 def match_speech_intent(text: str, intents: list[dict]) -> SpeechMatch:
@@ -381,6 +382,8 @@ class SpeechCommandHandler:
                 message = "{}，摄像头调整已开启，60 秒内请说转向口令。".format(
                     child_name
                 )
+            elif command == INTERPRET_POEM:
+                return self._start_poem_interpret(now)
             else:
                 raise ValueError("unknown speech command")
         except ValueError:
@@ -473,7 +476,246 @@ class SpeechCommandHandler:
             return self._handle_finish_review(dialogue, normalized, now)
         if dialogue["dialogue_type"] == "checkin":
             return self._handle_checkin(dialogue, normalized, now)
+        if dialogue["dialogue_type"] == "poem_interpret":
+            return self._handle_poem_interpret(dialogue, normalized, now)
         return False
+
+    def _start_poem_interpret(self, now: datetime) -> bool:
+        """口令命中：进入古诗解读流程，先问诗名。"""
+        settings = self._family.get_settings()
+        prompt = "好的，你想解读哪首诗？请说出诗名。"
+        self._dialogues.start(
+            now.date().isoformat(),
+            "poem_interpret",
+            "awaiting_poem",
+            {},
+            prompt,
+            [],
+            now,
+            int(settings["dialogue_first_retry_seconds"]),
+        )
+        self._activities.record(
+            now,
+            "speech",
+            "poem_interpret_started",
+            self._input_source,
+            "success",
+            "古诗解读已开始",
+            "等待孩子说出诗名。",
+            {},
+        )
+        self._speak_and_record(prompt, INTERPRET_POEM, "success")
+        return True
+
+    def _handle_poem_interpret(
+        self,
+        dialogue: dict,
+        normalized: str,
+        now: datetime,
+    ) -> bool:
+        context = dialogue["context"]
+        state = dialogue["state"]
+        if _contains_any(normalized, ("不了", "不解读", "取消", "结束解读")):
+            self._dialogues.complete(dialogue["id"], "cancelled", now)
+            self._speak_and_record(
+                "好的，古诗解读结束了。",
+                INTERPRET_POEM,
+                "cancelled",
+            )
+            return True
+
+        if state == "awaiting_poem":
+            if not normalized:
+                return self._retry_poem_poem_name(dialogue, now)
+            settings = self._family.get_settings()
+            api_key = settings.get("deepseek_api_key", "")
+            model = settings.get("deepseek_model", "")
+            poem = resolve_poem(
+                normalized,
+                self._config.poem,
+                api_key,
+                model,
+                on_result=self._record_deepseek_call,
+                max_tokens=_optional_int(
+                    settings.get("deepseek_max_tokens", "")
+                ),
+                timeout_seconds=_optional_int(
+                    settings.get("deepseek_timeout_seconds", "")
+                ),
+            )
+            if poem is None:
+                self._activities.record(
+                    now,
+                    "speech",
+                    "poem_not_found",
+                    self._input_source,
+                    "ignored",
+                    "古诗未找到",
+                    "本地诗库和在线解读都没有这首诗。",
+                    {"spoken": normalized},
+                )
+                self._speak_and_record(
+                    "这首诗我还没有准备好讲解，可以让家长在设置里补充。"
+                    "请再说一遍诗名，或者说“不了”结束。",
+                    INTERPRET_POEM,
+                    "failed",
+                )
+                return True
+            context["poem"] = poem
+            self._dialogues.update(
+                dialogue["id"],
+                "confirming",
+                context,
+                self._poem_confirm_prompt(poem),
+                ["对", "是", "确认", "不对", "不是", "错了"],
+                now,
+                None,
+            )
+            self._speak_and_record(
+                self._poem_confirm_prompt(poem),
+                INTERPRET_POEM,
+                "success",
+            )
+            return True
+
+        if state == "confirming":
+            if _contains_any(normalized, ("不对", "不是", "错了", "换一首")):
+                context.pop("poem", None)
+                self._dialogues.update(
+                    dialogue["id"],
+                    "awaiting_poem",
+                    context,
+                    "好的，请再说一遍诗名。",
+                    [],
+                    now,
+                    None,
+                )
+                self._speak_and_record(
+                    "好的，请再说一遍诗名。",
+                    INTERPRET_POEM,
+                    "success",
+                )
+                return True
+            if _contains_any(normalized, ("对", "是", "确认")):
+                poem = context.get("poem")
+                if poem is None:
+                    return self._retry_poem_poem_name(dialogue, now)
+                return self._narrate_poem(dialogue, poem, now)
+            return self._ignore_invalid_dialogue_reply(dialogue, now)
+
+        if state == "interpreting":
+            if _contains_any(normalized, ("再说一遍", "再读一遍", "重讲", "再讲一次")):
+                poem = context.get("poem")
+                if poem is not None:
+                    return self._narrate_poem(dialogue, poem, now)
+            if _contains_any(normalized, ("继续", "换一首", "下一首", "再来一首")):
+                self._dialogues.update(
+                    dialogue["id"],
+                    "awaiting_poem",
+                    context,
+                    "好的，你想解读哪首诗？请说出诗名。",
+                    [],
+                    now,
+                    None,
+                )
+                self._speak_and_record(
+                    "好的，你想解读哪首诗？请说出诗名。",
+                    INTERPRET_POEM,
+                    "success",
+                )
+                return True
+            return self._ignore_invalid_dialogue_reply(dialogue, now)
+
+        return self._ignore_invalid_dialogue_reply(dialogue, now)
+
+    def _retry_poem_poem_name(self, dialogue: dict, now: datetime) -> bool:
+        self._speak_and_record(
+            "我没有听清诗名，请再说一遍，或者说“不了”结束。",
+            INTERPRET_POEM,
+            "failed",
+        )
+        return True
+
+    def _record_deepseek_call(self, result: dict) -> None:
+        """把每次 DeepSeek 请求的结果记入活动记录（成功或失败）。"""
+        now = datetime.now(self._timezone)
+        if result["status"] == "success":
+            self._activities.record(
+                now,
+                "speech",
+                "poem_deepseek_request",
+                self._input_source,
+                "success",
+                "DeepSeek 古诗解读成功",
+                "《{}》 · {} · {}ms · {} 段".format(
+                    result.get("poem_title", ""),
+                    result.get("model", ""),
+                    result.get("latency_ms", 0),
+                    result.get("segments", 0),
+                ),
+                result,
+            )
+        else:
+            self._activities.record(
+                now,
+                "speech",
+                "poem_deepseek_request",
+                self._input_source,
+                "failed",
+                "DeepSeek 古诗解读失败",
+                result.get("error", ""),
+                result,
+            )
+
+    def _poem_confirm_prompt(self, poem: dict) -> str:
+        return "是《{}》吗？{}代{}的{}。请回答“对”或者“不对”。".format(
+            _spoken_poem_title(poem),
+            poem["dynasty"],
+            poem["author"],
+            "作品" if poem["dynasty"] else "",
+        )
+
+    def _narrate_poem(self, dialogue: dict, poem: dict, now: datetime) -> bool:
+        """逐段播报原文 + 白话解读。分段合成，给孩子跟读节奏。"""
+        title = _spoken_poem_title(poem)
+        header = "《{}》，{}代{}{}。".format(
+            title,
+            poem["dynasty"],
+            poem["author"],
+            "的作品" if poem["dynasty"] else "",
+        )
+        self._speak_and_record(header, INTERPRET_POEM, "success")
+        for segment in poem["segments"]:
+            self._speak_and_record(segment["original"], INTERPRET_POEM, "success")
+            self._speak_and_record(
+                "它的意思是：{}".format(segment["translation"]),
+                INTERPRET_POEM,
+                "success",
+            )
+        if poem.get("meaning"):
+            self._speak_and_record(poem["meaning"], INTERPRET_POEM, "success")
+        context = dict(dialogue["context"])
+        context["poem"] = poem
+        self._dialogues.update(
+            dialogue["id"],
+            "interpreting",
+            context,
+            "解读完了。想再听一遍可以说“再说一遍”，想换一首可以说诗名，结束了可以说“不了”。",
+            ["再说一遍", "再读一遍", "不了", "结束解读"],
+            now,
+            None,
+        )
+        self._activities.record(
+            now,
+            "speech",
+            "poem_interpreted",
+            self._input_source,
+            "success",
+            "古诗已解读",
+            "《{}》已播报 {} 段".format(title, len(poem["segments"])),
+            {"title": title, "source": poem.get("_source", "library")},
+        )
+        return True
 
     def _start_finish_review(self, now: datetime) -> bool:
         items = self._family.list_finish_check_items(now.date())
@@ -1463,6 +1705,27 @@ def _contains_any(normalized_text: str, phrases) -> bool:
         normalize_speech_text(phrase) in normalized_text
         for phrase in phrases
     )
+
+
+def _optional_int(value) -> Optional[int]:
+    """把字符串转 int；空或非法返回 None（调用方用配置默认值兜底）。"""
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _spoken_poem_title(poem: dict) -> str:
+    """去掉标题里的括号（如「悯农（其二）」，口语读作「悯农」）。"""
+    title = poem["title"]
+    for opening, closing in (("（", "）"), ("(", ")")):
+        start = title.find(opening)
+        end = title.rfind(closing)
+        if start != -1 and end > start:
+            return title[:start].strip() or title
+    return title
 
 
 def _finish_replies(item: dict) -> list[str]:

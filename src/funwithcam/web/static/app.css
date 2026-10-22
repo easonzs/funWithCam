@@ -3911,3 +3911,77 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* 古诗解读调试页 */
+.ok { color: var(--success); font-weight: 600; }
+.warn { color: var(--danger); font-weight: 600; }
+.error-text { color: var(--danger); word-break: break-all; }
+
+.poem-result {
+  max-width: 760px;
+  margin-top: 18px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.poem-result h3 {
+  margin: 0 0 14px;
+  font-size: 1.15rem;
+  color: var(--ink);
+}
+.poem-segments {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  counter-reset: seg;
+}
+.poem-segments li {
+  counter-increment: seg;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.poem-segments li:last-child { border-bottom: none; }
+.poem-segments li::before {
+  content: counter(seg) ".";
+  display: inline-block;
+  width: 1.6em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.poem-original { margin: 0; color: var(--ink); font-weight: 600; }
+.poem-translation { margin: 3px 0 0 1.6em; color: var(--muted); }
+.poem-meaning {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--ink);
+}
+
+/* 古诗解读调试页：配置网格（不继承 keyword-example-grid 的 span 规则） */
+.debug-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 14px;
+  align-items: baseline;
+}
+.debug-key {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.debug-value {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+.debug-value code {
+  padding: 3px 7px;
+  color: var(--ink);
+  background: var(--bg);
+  border-radius: 6px;
+}
+.debug-note {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
